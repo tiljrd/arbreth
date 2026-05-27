@@ -8,7 +8,6 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use alloy_consensus::Sealable;
 use alloy_rlp::Encodable;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};

@@ -774,7 +774,6 @@ mod tests {
 
     #[test]
     fn nonzero_genesis_installs_rlp_header_and_skips_injection() {
-        use alloy_consensus::Sealable;
         use alloy_rlp::Encodable;
         // A non-empty migration genesis header (real migrated chains carry the
         // init transactions, so gas_used / roots are non-default).
