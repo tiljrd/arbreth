@@ -66,7 +66,12 @@ pub trait ArbitrumChainSpec {
     /// Returns the chain ID.
     fn chain_id(&self) -> u64;
 
-    /// Maps a timestamp to the appropriate SpecId.
+    /// Maps a timestamp to a `SpecId`.
+    ///
+    /// Not on the execution path: block execution selects the EVM spec from
+    /// the header's ArbOS version via [`spec_id_by_arbos_version`], which is
+    /// authoritative and chain-agnostic. This method only encodes Arbitrum
+    /// Sepolia's schedule and must not be relied on for other chains.
     fn spec_id_by_timestamp(&self, timestamp: u64) -> SpecId;
 
     /// Maps an ArbOS version to the appropriate SpecId.
