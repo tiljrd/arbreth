@@ -38,7 +38,9 @@ pub struct Arb1StateConvertArgs {
 
     /// Expected migration state root. Written as the first line so reth's
     /// `init-state` can gate the dump root against the chainspec genesis root.
-    #[arg(long, default_value = "0xd764f1e1df4c2dbdc9f1785f86081734f1310f937ed09b5c753750f8b4d31bbd")]
+    /// Default = block 22,207,817's stateRoot (the actual Nitro migration
+    /// genesis); block 22,207,818's stateRoot 0xd764f1… is post-init-tx.
+    #[arg(long, default_value = "0x7f2bfc4481d02bfcfc606ebb949384ef78d03a0f30a2dc9cccd652eb80926ae1")]
     pub state_root: String,
 
     /// Progress log cadence (number of input lines per status line).

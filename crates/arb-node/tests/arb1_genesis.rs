@@ -9,11 +9,15 @@ use arb_node::chainspec::ArbChainSpecParser;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 
-/// Canonical values for Arbitrum One block 22207818 (the Nitro migration
-/// genesis), read from the live chain.
-const GENESIS_HASH: B256 = b256!("d1882c626699cd19548720713669993ac8f51500056dfbc1afc180496c7f8e2f");
-const STATE_ROOT: B256 = b256!("d764f1e1df4c2dbdc9f1785f86081734f1310f937ed09b5c753750f8b4d31bbd");
-const GENESIS_BLOCK: u64 = 22_207_818;
+/// Canonical values for Arbitrum One block 22207817 — the Nitro migration
+/// genesis built by `MakeGenesisBlock` after `InitializeArbosInDatabase`
+/// commits the migrated state. Block 22207818 is the first message-driven
+/// block (executes the init transactions), not the genesis. Verified via
+/// Alchemy archive at the canonical ArbOS slot 5 (GENESIS_BLOCK_NUM) which
+/// reads back 0x152dd49 = 22207817.
+const GENESIS_HASH: B256 = b256!("7d237dd685b96381544e223f8906e35645d63b89c19983f2246db48568c07986");
+const STATE_ROOT: B256 = b256!("7f2bfc4481d02bfcfc606ebb949384ef78d03a0f30a2dc9cccd652eb80926ae1");
+const GENESIS_BLOCK: u64 = 22_207_817;
 
 #[test]
 fn arbitrum_one_genesis_spec_matches_canonical() {

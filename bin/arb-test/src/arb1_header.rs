@@ -20,8 +20,10 @@ pub struct Arb1HeaderArgs {
     #[arg(long, env = "ARB_MAINNET_RPC")]
     pub rpc: String,
 
-    /// The Nitro migration genesis block number.
-    #[arg(long, default_value_t = 22_207_818)]
+    /// The Nitro migration genesis block number. For arb1 this is 22,207,817
+    /// (the block built by `MakeGenesisBlock` after `InitializeArbosInDatabase`),
+    /// not 22,207,818 (which is the first message-driven block running init txs).
+    #[arg(long, default_value_t = 22_207_817)]
     pub block: u64,
 
     /// L2 chain id.
