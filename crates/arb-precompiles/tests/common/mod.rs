@@ -107,6 +107,7 @@ pub struct PrecompileTest {
     l1_block_cache: Vec<(u64, u64)>,
     l2_block_hashes: Vec<(u64, B256)>,
     allow_debug_precompiles: bool,
+    caller_stack: Vec<Address>,
 }
 
 impl Default for PrecompileTest {
@@ -130,6 +131,7 @@ impl Default for PrecompileTest {
             l1_block_cache: Vec::new(),
             l2_block_hashes: Vec::new(),
             allow_debug_precompiles: false,
+            caller_stack: Vec::new(),
         }
     }
 }
@@ -191,6 +193,12 @@ impl PrecompileTest {
     }
     pub fn tx_is_aliased(mut self, a: bool) -> Self {
         self.tx_is_aliased = a;
+        self
+    }
+    /// Pushes callers onto the precompile ctx caller stack in the given order;
+    /// `caller_at_depth(n)` returns the `n`-th element (1-indexed).
+    pub fn caller_stack(mut self, frames: Vec<Address>) -> Self {
+        self.caller_stack = frames;
         self
     }
     pub fn block_basefee(mut self, fee: u64) -> Self {
@@ -295,6 +303,9 @@ impl PrecompileTest {
             caller_stack: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
         });
         pre_ctx.set_tx_is_aliased(self.tx_is_aliased);
+        for caller in &self.caller_stack {
+            pre_ctx.push_caller(*caller);
+        }
         let precompile = factory(pre_ctx.clone());
 
         let mut ctx = EthEvmContext::new(self.db, self.spec);
