@@ -1,3 +1,4 @@
+mod arb1_arbos_synthesize;
 mod arb1_header;
 mod arb1_state_convert;
 mod fixture;
@@ -40,6 +41,10 @@ enum Command {
 
     /// Convert a classic `arb_exportState` `accounts.json` to reth init-state JSONL.
     Arb1StateConvert(arb1_state_convert::Arb1StateConvertArgs),
+
+    /// Synthesize the ArbOS migration add-on state (ArbOS account + escrows +
+    /// beneficiary credits) as JSONL to concatenate with arb1-state-convert.
+    Arb1ArbosSynthesize(arb1_arbos_synthesize::Arb1ArbosSynthesizeArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -51,5 +56,6 @@ fn main() -> anyhow::Result<()> {
         Command::StateDump(a) => state_dump::run(a),
         Command::Arb1Header(a) => arb1_header::run(a),
         Command::Arb1StateConvert(a) => arb1_state_convert::run(a),
+        Command::Arb1ArbosSynthesize(a) => arb1_arbos_synthesize::run(a),
     }
 }
