@@ -94,10 +94,10 @@ impl TxProcessor {
         if self.delayed_inbox {
             return true;
         }
-        if arbos_version == 9 {
+        if arbos_version == arb_ver::ARBOS_VERSION_ALWAYS_COLLECT_TIPS {
             return false;
         }
-        if arbos_version < 60 {
+        if arbos_version < arb_ver::ARBOS_VERSION_MULTI_GAS_CONSTRAINTS {
             return true;
         }
         !collect_tips_enabled
@@ -137,7 +137,7 @@ impl TxProcessor {
         gas_price: U256,
         collect_tips_enabled: bool,
     ) -> U256 {
-        if arbos_version >= 3 {
+        if arbos_version >= arb_ver::ARBOS_VERSION_TIME_PASSED_AS_TIME {
             self.get_paid_gas_price_with_collect(
                 arbos_version,
                 base_fee,
@@ -313,19 +313,21 @@ impl TxProcessor {
 
         let mut infra_fee_amount = U256::ZERO;
 
-        if params.arbos_version > 4 && params.infra_fee_account != Address::ZERO {
+        if params.arbos_version >= arb_ver::ARBOS_VERSION_INFRA_FEE_SPLIT
+            && params.infra_fee_account != Address::ZERO
+        {
             let infra_fee = params.min_base_fee.min(base_fee);
             infra_fee_amount = infra_fee.saturating_mul(U256::from(compute_gas));
             compute_cost = compute_cost.saturating_sub(infra_fee_amount);
         }
 
-        let poster_fee_destination = if params.arbos_version < 2 {
+        let poster_fee_destination = if params.arbos_version < arb_ver::ARBOS_VERSION_POSTER_FUNDS_TO_POOL {
             params.coinbase
         } else {
             l1_pricing::L1_PRICER_FUNDS_POOL_ADDRESS
         };
 
-        let l1_fees_to_add = if params.arbos_version >= arb_ver::ARBOS_VERSION_10 {
+        let l1_fees_to_add = if params.arbos_version >= arb_ver::ARBOS_VERSION_L1_PRICING_FROM_POOL_SLOT {
             poster_fee
         } else {
             U256::ZERO

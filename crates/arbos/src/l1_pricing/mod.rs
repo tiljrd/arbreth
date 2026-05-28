@@ -6,6 +6,7 @@ pub use error::L1PricingError;
 
 use alloy_primitives::{Address, U256};
 
+use arb_chainspec::arbos_version as arb_ver;
 use arb_storage::{
     Storage, StorageBackedAddress, StorageBackedBigInt, StorageBackedBigUint, StorageBackedInt64,
     StorageBackedUint64, StorageBackend, SystemStateBackend,
@@ -283,7 +284,7 @@ impl<'a, D> L1PricingState<'a, D> {
         magnitude: U256,
         negative: bool,
     ) -> Result<(), L1PricingError> {
-        if self.arbos_version < 7 {
+        if self.arbos_version < arb_ver::ARBOS_VERSION_LAST_SURPLUS_SIGNED {
             // Pre-v7 stores `|val|` as unsigned: Nitro `l1pricing.go:224`
             // routes `SetLastSurplus` to `Set_preVersion7(val)`, which writes
             // `BytesToHash(val.Bytes())` — `val.Bytes()` is the magnitude.
@@ -487,7 +488,7 @@ impl<'a, D> L1PricingState<'a, D> {
         G: FnMut(Address) -> U256,
         B: StorageBackend,
     {
-        if self.arbos_version < 2 {
+        if self.arbos_version < arb_ver::ARBOS_VERSION_POSTER_FUNDS_TO_POOL {
             return self._preversion2_update(
                 backend,
                 update_time,
@@ -530,7 +531,7 @@ impl<'a, D> L1PricingState<'a, D> {
 
         // Amortized-cost cap applies from v3+. Pre-v11 the cap is `MaxUint64` (Nitro's known
         // bug — v11 fixes it). At v6 the cap is the broken value; we faithfully replicate.
-        if self.arbos_version >= 3 {
+        if self.arbos_version >= arb_ver::ARBOS_VERSION_AMORTIZED_COST_CAP {
             let cap_bips = self.amortized_cost_cap_bips(backend).unwrap_or(0);
             if cap_bips != 0 {
                 let cap = l1_basefee
@@ -724,7 +725,7 @@ impl<D: revm::Database> L1PricingState<'_, D> {
         G: FnMut(Address) -> U256,
         B: StorageBackend,
     {
-        if self.arbos_version < 10 {
+        if self.arbos_version < arb_ver::ARBOS_VERSION_L1_PRICING_FROM_POOL_SLOT {
             return self._preversion10_update(
                 backend,
                 update_time,
@@ -769,7 +770,7 @@ impl<D: revm::Database> L1PricingState<'_, D> {
         self.set_units_since_update(backend, units_since.saturating_sub(units_allocated))?;
 
         let mut wei_spent = wei_spent;
-        if self.arbos_version >= 3 {
+        if self.arbos_version >= arb_ver::ARBOS_VERSION_AMORTIZED_COST_CAP {
             let cap_bips = self.amortized_cost_cap_bips(backend).unwrap_or(0);
             if cap_bips != 0 {
                 let cap = l1_basefee

@@ -408,11 +408,11 @@ where
     let mut l1_block_number = inputs.l1_block_number;
     let mut time_passed = inputs.time_passed;
 
-    if arbos_version < arbos_version::ARBOS_VERSION_3 {
+    if arbos_version < arbos_version::ARBOS_VERSION_TIME_PASSED_AS_TIME {
         time_passed = inputs.l2_block_number;
     }
 
-    if arbos_version < arbos_version::ARBOS_VERSION_8 {
+    if arbos_version < arbos_version::ARBOS_VERSION_L1_BLOCK_NUMBER_DIRECT {
         l1_block_number = l1_block_number.saturating_add(1);
     }
 

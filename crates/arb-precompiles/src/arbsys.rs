@@ -1,6 +1,7 @@
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{keccak256, Address, Log, B256, U256};
 use alloy_sol_types::{SolError, SolEvent, SolInterface};
+use arb_chainspec::arbos_version as arb_ver;
 use arb_context::ArbPrecompileCtx;
 use arb_storage::ARBOS_STATE_ADDRESS;
 use arbos::merkle_accumulator::calc_num_partials;
@@ -231,7 +232,7 @@ fn handle_was_aliased(input: &mut PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -
 
     let tx_origin = input.internals().tx_origin();
     let depth = ctx.evm_depth();
-    let is_top_level = if arbos_version < 6 {
+    let is_top_level = if arbos_version < arb_ver::ARBOS_VERSION_IS_TOP_LEVEL_ORIGIN_CHECK {
         depth == 2
     } else if depth <= 2 {
         true
@@ -263,7 +264,7 @@ fn handle_caller_without_alias(
     };
 
     let arbos_version = ctx.block.arbos_version;
-    let is_top_level = if arbos_version < 6 {
+    let is_top_level = if arbos_version < arb_ver::ARBOS_VERSION_IS_TOP_LEVEL_ORIGIN_CHECK {
         depth == 2
     } else if depth <= 2 {
         true
