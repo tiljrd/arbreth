@@ -577,6 +577,7 @@ where
                     chain_id,
                     initial_version,
                     genesis::DEFAULT_CHAIN_OWNER,
+                    self.chain_spec.genesis_header().number,
                     genesis::ArbOSInit::default(),
                 )
                 .map_err(|e| BlockProducerError::Execution(e.to_string()))?;

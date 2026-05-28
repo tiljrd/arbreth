@@ -119,6 +119,9 @@ impl ChainSpecParser for ArbChainSpecParser {
                 initial_arbos,
                 initial_owner,
                 arbos_init,
+                // Gate above ensures genesis_number == 0; alloc injection
+                // only runs for fresh chains, so the genesis block num is 0.
+                0,
             )?;
             override_arbos_genesis_header(&mut value, initial_arbos)?;
         }
@@ -230,6 +233,7 @@ fn inject_arbos_alloc(
     arbos_version: u64,
     chain_owner: Address,
     arbos_init: genesis::ArbOSInit,
+    genesis_block_num: u64,
 ) -> eyre::Result<()> {
     // Pre-compute the Go-canonical chain config bytes so the resulting
     // `chain_config` subspace slot layout matches a Go-style
@@ -251,6 +255,7 @@ fn inject_arbos_alloc(
         chain_id,
         arbos_version,
         chain_owner,
+        genesis_block_num,
         arbos_init,
         serialized_chain_config,
         U256::from(DEFAULT_INITIAL_L1_BASE_FEE_WEI),
@@ -334,6 +339,7 @@ pub fn compute_arbos_alloc(
         chain_id,
         arbos_version,
         chain_owner,
+        0,
         arbos_init,
         Vec::new(),
         U256::ZERO,
@@ -350,6 +356,7 @@ pub fn compute_arbos_alloc_with_config(
     chain_id: u64,
     arbos_version: u64,
     chain_owner: Address,
+    genesis_block_num: u64,
     arbos_init: genesis::ArbOSInit,
     serialized_chain_config: Vec<u8>,
     initial_l1_base_fee: U256,
@@ -371,6 +378,7 @@ pub fn compute_arbos_alloc_with_config(
         chain_id,
         arbos_version,
         chain_owner,
+        genesis_block_num,
         arbos_init,
     )
     .map_err(|e| eyre!("initialize_arbos_state: {e}"))?;

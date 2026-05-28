@@ -1,14 +1,12 @@
 use alloy_primitives::{Address, B256, U256};
 use arb_storage::{
-    set_account_nonce, Storage, StorageBackedAddress, StorageBackedBigUint, StorageBackend,
-    ARBOS_STATE_ADDRESS,
+    set_account_nonce, Storage, StorageBackedAddress, StorageBackedBigUint, StorageBackedBytes,
+    StorageBackedUint64, StorageBackend, ARBOS_STATE_ADDRESS,
 };
 use revm::{database::State, Database};
 
 use crate::{
-    burn::Burner,
-    l1_pricing::L1PricingState,
-    l2_pricing::L2PricingState,
+    address_set, burn::Burner, l1_pricing, l1_pricing::L1PricingState, l2_pricing::L2PricingState,
     retryables::{self, RetryableState},
 };
 
@@ -226,12 +224,26 @@ pub fn initialize_arbos_in_database<D: Database, B: Burner, C: StorageBackend>(
 }
 
 /// Bring a fresh database to a fully-initialised ArbOS state at the requested
-/// version, returning the opened state.
+/// version. Mirrors Nitro's `arbos/arbosState/arbosstate.go::InitializeArbosState`
+/// — sets the well-known root offsets, initialises every subspace, adds the
+/// initial chain owner, and upgrades through to `target_arbos_version`.
+///
+/// `genesis_block_num` is the on-chain genesis block (`GenesisBlockNum` from
+/// `chain_info.json`; zero for fresh chains, non-zero for migrated chains
+/// like arb1). `serialized_chain_config` is `json.Marshal(*params.ChainConfig)`
+/// of the chain's config; pass an empty slice for fresh chains that don't
+/// derive a chain config from an init message.
+///
+/// `network_fee_account` follows Nitro: set to `initial_chain_owner` for
+/// `target_arbos_version >= 2`, otherwise zero. `infra_fee_account` is never
+/// set here (Nitro leaves it zero until `SetInfraFeeAccount` is called by a
+/// chain-owner action).
 pub fn bootstrap<'a, D: Database, B: Burner>(
     state: &'a mut State<D>,
     chain_id: u64,
-    network_fee_account: Address,
-    infra_fee_account: Address,
+    initial_chain_owner: Address,
+    genesis_block_num: u64,
+    serialized_chain_config: &[u8],
     l1_initial_base_fee: U256,
     target_arbos_version: u64,
     burner: B,
@@ -240,35 +252,72 @@ pub fn bootstrap<'a, D: Database, B: Burner>(
 
     {
         let backing = Storage::<D>::new(state, B256::ZERO);
+
+        // Root-namespace slot writes (matches arbosstate.go:265-303).
         backing.set_by_uint64(super::VERSION_OFFSET, B256::from(U256::from(1u64)))?;
-        // SAFETY: see `Storage` struct-level invariant. The `&mut State`
-        // returned here is used transiently to drive `StorageBackend`-based
-        // setters and is dropped before any subsequent use of `backing`.
+
+        // SAFETY: each `state_mut()` borrow is dropped before the next; `backing`
+        // is the only live `Storage<D>` handle in this scope.
         let s = unsafe { backing.state_mut() };
         StorageBackedBigUint::new(B256::ZERO, super::CHAIN_ID_OFFSET)
             .set(s, U256::from(chain_id))?;
-        // SAFETY: see above.
-        let s = unsafe { backing.state_mut() };
-        StorageBackedAddress::new(B256::ZERO, super::NETWORK_FEE_ACCOUNT_OFFSET)
-            .set(s, network_fee_account)?;
-        // SAFETY: see above.
-        let s = unsafe { backing.state_mut() };
-        StorageBackedAddress::new(B256::ZERO, super::INFRA_FEE_ACCOUNT_OFFSET)
-            .set(s, infra_fee_account)?;
 
-        let l1_sto = backing.open_sub_storage(super::L1_PRICING_SUBSPACE);
-        // SAFETY: see above.
+        // Nitro: networkFeeAccount = initialChainOwner only when v>=2; v1 leaves
+        // it zero until a chain-owner action sets it. Same convention here.
+        if target_arbos_version >= 2 {
+            let s = unsafe { backing.state_mut() };
+            StorageBackedAddress::new(B256::ZERO, super::NETWORK_FEE_ACCOUNT_OFFSET)
+                .set(s, initial_chain_owner)?;
+        }
+
         let s = unsafe { backing.state_mut() };
-        L1PricingState::initialize(&l1_sto, s, network_fee_account, l1_initial_base_fee)?;
+        StorageBackedUint64::new(B256::ZERO, super::GENESIS_BLOCK_NUM_OFFSET)
+            .set(s, genesis_block_num)?;
+
+        if !serialized_chain_config.is_empty() {
+            let cc_sto = backing.open_sub_storage(super::CHAIN_CONFIG_SUBSPACE);
+            let s = unsafe { backing.state_mut() };
+            StorageBackedBytes::new(cc_sto.base_key()).set(s, serialized_chain_config)?;
+        }
+
+        // Subspace inits. The address-set inits write `size = 0` at slot 0,
+        // which geth's commit prunes (no trie effect); the merkle-accumulator
+        // and blockhash inits are no-ops. We call them anyway to match Nitro's
+        // structure and surface any future non-zero-init logic.
+        let l1_sto = backing.open_sub_storage(super::L1_PRICING_SUBSPACE);
+        let initial_rewards_recipient = if target_arbos_version >= 2 {
+            initial_chain_owner
+        } else {
+            l1_pricing::BATCH_POSTER_ADDRESS
+        };
+        let s = unsafe { backing.state_mut() };
+        L1PricingState::initialize(&l1_sto, s, initial_rewards_recipient, l1_initial_base_fee)?;
+
         let l2_sto = backing.open_sub_storage(super::L2_PRICING_SUBSPACE);
-        // SAFETY: see above.
         let s = unsafe { backing.state_mut() };
         L2PricingState::<D>::initialize(&l2_sto, s)?;
+
         RetryableState::<D>::initialize(&backing.open_sub_storage(super::RETRYABLES_SUBSPACE))?;
+
+        address_set::initialize_address_set(
+            &backing.open_sub_storage(super::CHAIN_OWNER_SUBSPACE),
+        )?;
+        address_set::initialize_address_set(
+            &backing.open_sub_storage(super::NATIVE_TOKEN_OWNER_SUBSPACE),
+        )?;
+        address_set::initialize_address_set(
+            &backing.open_sub_storage(super::TRANSACTION_FILTERING_SUBSPACE),
+        )?;
     }
 
+    // Open ArbosState now that version=1 is persisted, then add the initial
+    // chain owner (matches arbosstate.go:333) and step through versions.
     let mut arbos = ArbosState::open(state, burner)?;
+
     // SAFETY: see `Storage` struct-level invariant.
+    let s = unsafe { arbos.backing_storage.state_mut() };
+    arbos.chain_owners.add(s, initial_chain_owner)?;
+
     let s = unsafe { arbos.backing_storage.state_mut() };
     arbos.upgrade_arbos_version(s, target_arbos_version, true)?;
     Ok(arbos)

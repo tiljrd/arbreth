@@ -4,18 +4,12 @@
 //! Runs when the first message (Kind=11, Initialize) is received from the
 //! consensus sidecar.
 
-use alloy_primitives::{address, Address, Bytes, B256, U256};
+use alloy_primitives::{address, Address, Bytes};
 use revm::{database::State, Database};
 use tracing::info;
 
-use arb_storage::{
-    set_account_code, set_account_nonce, Storage, StorageBackedBigUint, StorageBackedBytes,
-    ARBOS_STATE_ADDRESS,
-};
-use arbos::{
-    arbos_state::ArbosState, arbos_types::ParsedInitMessage, burn::SystemBurner, l1_pricing,
-    l2_pricing,
-};
+use arb_storage::{set_account_code, Storage};
+use arbos::{arbos_state::initialize::bootstrap, arbos_types::ParsedInitMessage, burn::SystemBurner};
 
 use crate::error::GenesisError;
 
@@ -70,10 +64,10 @@ pub fn initialize_arbos_state<D: Database>(
     chain_id: u64,
     target_arbos_version: u64,
     chain_owner: Address,
+    genesis_block_num: u64,
     arbos_init: ArbOSInit,
 ) -> Result<(), GenesisError> {
-    let backing = Storage::new(state, B256::ZERO);
-    if backing.get_uint64_by_uint64(0).unwrap_or(0) != 0 {
+    if is_arbos_initialized(state) {
         return Err(GenesisError::AlreadyInitialized);
     }
 
@@ -81,176 +75,54 @@ pub fn initialize_arbos_state<D: Database>(
         target: "arb::genesis",
         chain_id,
         target_arbos_version,
+        genesis_block_num,
         initial_l1_base_fee = %init_msg.initial_l1_base_fee,
         "Initializing ArbOS state"
     );
 
-    // SAFETY: genesis runs single-threaded; no two state_mut borrows are live
-    // concurrently. `backing` is the only live Storage handle.
-    set_account_nonce(unsafe { backing.state_mut() }, ARBOS_STATE_ADDRESS, 1);
-
-    // 1. Set version to 1 (base version before upgrades).
-    backing
-        .set_by_uint64(0, B256::from(U256::from(1u64)))
-        .map_err(|source| GenesisError::StorageWrite {
-            what: "initial version",
-            source,
-        })?;
-
-    // 2. Set chain ID.
-    // SAFETY: see initial state_mut() comment; no overlapping Storage handles.
-    StorageBackedBigUint::new(B256::ZERO, 4)
-        .set(unsafe { backing.state_mut() }, U256::from(chain_id))
-        .map_err(|source| GenesisError::StorageWrite {
-            what: "chain id",
-            source,
-        })?;
-
-    // 3. Install precompile code markers for version-0 precompiles only.
+    // Install the [0xFE] code marker on every version-0 precompile address —
+    // Solidity requires call targets have code, and ArbOS precompiles don't.
+    // Bootstrap doesn't touch account code; this is a node-level concern.
     for addr in &GENESIS_PRECOMPILE_ADDRESSES {
-        // SAFETY: see initial state_mut() comment.
-        set_account_code(
-            unsafe { backing.state_mut() },
-            *addr,
-            Bytes::from_static(&[0xFE]),
-        );
+        set_account_code(state, *addr, Bytes::from_static(&[0xFE]));
     }
 
-    // 3b. Set network fee account (chain owner for version >= 2).
-    if target_arbos_version >= 2 {
-        let mut hash = B256::ZERO;
-        hash[12..32].copy_from_slice(chain_owner.as_slice());
-        backing
-            .set_by_uint64(3, hash)
-            .map_err(|source| GenesisError::StorageWrite {
-                what: "network fee account",
-                source,
-            })?;
-    }
-
-    // 3c. Store serialized chain config.
-    if !init_msg.serialized_chain_config.is_empty() {
-        let cc_sto = backing.open_sub_storage(&[7]); // CHAIN_CONFIG_SUBSPACE
-        let cc_bytes = StorageBackedBytes::new(cc_sto.base_key());
-        // SAFETY: see initial state_mut() comment.
-        cc_bytes
-            .set(
-                unsafe { backing.state_mut() },
-                &init_msg.serialized_chain_config,
-            )
-            .map_err(|source| GenesisError::StorageWrite {
-                what: "chain config",
-                source,
-            })?;
-    }
-
-    // 4. Initialize L1 pricing state.
-    let l1_sto = backing.open_sub_storage(&[0]); // L1_PRICING_SUBSPACE
-    let rewards_recipient = if target_arbos_version >= 2 {
-        chain_owner
-    } else {
-        Address::ZERO
-    };
-    // SAFETY: see initial state_mut() comment.
-    l1_pricing::L1PricingState::initialize(
-        &l1_sto,
-        unsafe { backing.state_mut() },
-        rewards_recipient,
+    // `bootstrap` performs the full ArbOS state init Nitro does in
+    // `arbosstate.go::InitializeArbosState`: root-namespace slots, all
+    // subspace inits, initial chain-owner add, version upgrade chain.
+    let arb_state = bootstrap(
+        state,
+        chain_id,
+        chain_owner,
+        genesis_block_num,
+        &init_msg.serialized_chain_config,
         init_msg.initial_l1_base_fee,
+        target_arbos_version,
+        SystemBurner::new(None, false),
     )
     .map_err(|e| GenesisError::InitSubsystem {
-        subsystem: "L1 pricing",
+        subsystem: "bootstrap",
         source: e.into(),
     })?;
 
-    // 5. Initialize L2 pricing state.
-    // L2_PRICING_SUBSPACE.
-    let l2_sto = backing.open_sub_storage(&[1]);
-    // SAFETY: see initial state_mut() comment.
-    l2_pricing::L2PricingState::initialize(&l2_sto, unsafe { backing.state_mut() }).map_err(
-        |e| GenesisError::InitSubsystem {
-            subsystem: "L2 pricing",
-            source: e.into(),
-        },
-    )?;
-
-    // 6. Initialize retryable state.
-    let ret_sto = backing.open_sub_storage(&[2]); // RETRYABLES_SUBSPACE
-    arbos::retryables::RetryableState::initialize(&ret_sto).map_err(|e| {
-        GenesisError::InitSubsystem {
-            subsystem: "retryables",
-            source: e.into(),
-        }
-    })?;
-
-    // 7. Initialize address table (no-op but call for consistency).
-    let at_sto = backing.open_sub_storage(&[3]); // ADDRESS_TABLE_SUBSPACE
-    arbos::address_table::initialize_address_table(&at_sto);
-
-    // 8. Initialize chain owners.
-    let co_sto = backing.open_sub_storage(&[4]); // CHAIN_OWNER_SUBSPACE
-    arbos::address_set::initialize_address_set(&co_sto).map_err(|e| {
-        GenesisError::InitSubsystem {
-            subsystem: "chain owners",
-            source: e.into(),
-        }
-    })?;
-
-    // 9. Initialize merkle accumulator.
-    let ma_sto = backing.open_sub_storage(&[5]); // SEND_MERKLE_SUBSPACE
-    arbos::merkle_accumulator::initialize_merkle_accumulator(&ma_sto);
-
-    // 10. Initialize blockhashes.
-    let bh_sto = backing.open_sub_storage(&[6]); // BLOCKHASHES_SUBSPACE
-    arbos::blockhash::initialize_blockhashes(&bh_sto);
-
-    // 11. Initialize features.
-    let _feat_sto = backing.open_sub_storage(&[9]); // FEATURES_SUBSPACE
-
-    // Open after persisting `version = 1` above. A failure here means the
-    // freshly written version word is unreadable, which is unrecoverable
-    // during genesis bring-up.
-    // SAFETY: see initial state_mut() comment.
-    let mut arb_state = ArbosState::open(
-        unsafe { backing.state_mut() },
-        SystemBurner::new(None, false),
-    )
-    .expect("open ArbOS state after genesis initial setup");
-
-    // SAFETY: see initial state_mut() comment.
-    arb_state
-        .chain_owners
-        .add(unsafe { backing.state_mut() }, chain_owner)
-        .map_err(|e| GenesisError::InitSubsystem {
-            subsystem: "chain owner",
-            source: e.into(),
-        })?;
-
+    // Optional ArbOS features the init message may enable.
     if arbos_init.native_token_supply_management_enabled {
-        // SAFETY: see initial state_mut() comment.
+        // SAFETY: arb_state is the only live `Storage<D>` handle.
+        let s = unsafe { arb_state.backing_storage.state_mut() };
         arb_state
-            .set_native_token_management_from_time(unsafe { backing.state_mut() }, 1)
+            .set_native_token_management_from_time(s, 1)
             .map_err(|source| GenesisError::InitSubsystem {
                 subsystem: "native token management",
                 source,
             })?;
     }
     if arbos_init.transaction_filtering_enabled {
-        // SAFETY: see initial state_mut() comment.
+        // SAFETY: see above.
+        let s = unsafe { arb_state.backing_storage.state_mut() };
         arb_state
-            .set_transaction_filtering_from_time(unsafe { backing.state_mut() }, 1)
+            .set_transaction_filtering_from_time(s, 1)
             .map_err(|source| GenesisError::InitSubsystem {
                 subsystem: "transaction filtering",
-                source,
-            })?;
-    }
-
-    if target_arbos_version > 1 {
-        // SAFETY: see initial state_mut() comment.
-        arb_state
-            .upgrade_arbos_version(unsafe { backing.state_mut() }, target_arbos_version, true)
-            .map_err(|source| GenesisError::Upgrade {
-                target: target_arbos_version,
                 source,
             })?;
     }
@@ -266,6 +138,6 @@ pub fn initialize_arbos_state<D: Database>(
 
 /// Check if ArbOS state is already initialized in the given state database.
 pub fn is_arbos_initialized<D: Database>(state: &mut State<D>) -> bool {
-    let backing = Storage::new(state, B256::ZERO);
+    let backing = Storage::new(state, alloy_primitives::B256::ZERO);
     backing.get_uint64_by_uint64(0).unwrap_or(0) != 0
 }

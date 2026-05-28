@@ -20,16 +20,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use arb_storage::{set_account_code, Storage, StorageBackedBytes, ARBOS_STATE_ADDRESS};
-use arb_test_utils::{db::EmptyDb, harness::ArbosHarness};
+use arb_storage::{set_account_code, ARBOS_STATE_ADDRESS};
+use arb_test_utils::harness::ArbosHarness;
 use arbos::arbos_state::initialize::{initialize_retryables, InitRetryableData};
 
-// Nitro's `arbos/arbosState/arbosstate.go::InitializeArbosState` writes the
-// genesis block number to offset 5 and the serialized chain config to
-// subspace 7. Our `bootstrap` (used by `ArbosHarness`) skips both, so the
-// synthesis tool installs them manually.
-const GENESIS_BLOCK_NUM_OFFSET: u64 = 5;
-const CHAIN_CONFIG_SUBSPACE: &[u8] = &[7];
 const ARB1_GENESIS_BLOCK_NUM: u64 = 22_207_818;
 // Hex of `json.Marshal(params.ChainConfig)` for arb1, captured from
 // nitro/cmd/chaininfo/arbitrum_chain_info.json via a Go helper. 554 bytes.
@@ -118,23 +112,27 @@ pub fn run(args: Arb1ArbosSynthesizeArgs) -> Result<()> {
     let user_addresses = read_user_addresses(&args.user_accounts)?;
     eprintln!("user_accounts: {} addresses", user_addresses.len());
 
-    // The harness wraps `bootstrap`: sets ArbOS account nonce=1, version, fee
-    // accounts, chain id, L1/L2/retryable subspaces, and upgrades to v6.
+    // Bootstrap (via the harness) now matches Nitro's InitializeArbosState
+    // exactly: writes version/chain_id/network_fee_account/genesis_block_num,
+    // installs chain_config bytes, initialises every subspace, adds the
+    // initial chain owner, upgrades to the target version.
+    let chain_config_bytes = hex::decode(ARB1_CHAIN_CONFIG_HEX.trim())
+        .context("decode embedded arb1 chain_config hex")?;
+    eprintln!("chain_config: {} bytes", chain_config_bytes.len());
+
     let initial_l1_base_fee = U256::from(args.initial_l1_base_fee_wei);
     let mut harness = ArbosHarness::new()
         .with_arbos_version(ARB1_ARBOS_VERSION)
         .with_chain_id(ARB1_CHAIN_ID)
-        // v6 ≥ v2 — NetworkFeeAccount is the chain owner per arbosstate.go:278.
-        .with_network_fee_account(ARB1_CHAIN_OWNER)
-        // Nitro never sets infraFeeAccount in InitializeArbosState; it stays
-        // zero until SetInfraFeeAccount is called by a chain-owner action.
-        .with_infra_fee_account(Address::ZERO)
+        .with_initial_chain_owner(ARB1_CHAIN_OWNER)
+        .with_genesis_block_num(ARB1_GENESIS_BLOCK_NUM)
+        .with_serialized_chain_config(chain_config_bytes)
         .with_l1_initial_base_fee(initial_l1_base_fee)
         .initialize();
 
     // Install the [0xFE] code marker on each v0 precompile (matches Nitro
-    // `arbosstate.go:236`). Bootstrap omits this; the production
-    // `initialize_arbos_state` adds it for fresh chains.
+    // `arbosstate.go:236`). Bootstrap doesn't touch account code — that's a
+    // node-level concern, same as in `arb-node::initialize_arbos_state`.
     {
         let state = harness.state();
         for addr in &GENESIS_PRECOMPILE_ADDRESSES {
@@ -142,38 +140,13 @@ pub fn run(args: Arb1ArbosSynthesizeArgs) -> Result<()> {
         }
     }
 
-    // Backfill the two non-zero offsets `bootstrap` doesn't write —
-    // GENESIS_BLOCK_NUM (offset 5) and the serialized chain config bytes
-    // (subspace 7). For Sepolia these are zero or empty; for arb1 both are
-    // populated and contribute to the migration's `0xd764f1…` state root.
-    let chain_config_bytes = hex::decode(ARB1_CHAIN_CONFIG_HEX.trim())
-        .context("decode embedded arb1 chain_config hex")?;
-    eprintln!("chain_config: {} bytes (subspace 7)", chain_config_bytes.len());
-    {
-        let state = harness.state();
-        let backing = Storage::<EmptyDb>::new(state, B256::ZERO);
-        backing
-            .set_by_uint64(GENESIS_BLOCK_NUM_OFFSET, B256::from(U256::from(ARB1_GENESIS_BLOCK_NUM)))
-            .map_err(|e| anyhow!("write GENESIS_BLOCK_NUM_OFFSET: {e}"))?;
-
-        let cc_sto = backing.open_sub_storage(CHAIN_CONFIG_SUBSPACE);
-        let cc_bytes = StorageBackedBytes::new(cc_sto.base_key());
-        // SAFETY: `backing` is the only live `Storage<D>` handle; we drop the
-        // `&mut State` borrow as soon as the set returns.
-        cc_bytes
-            .set(unsafe { backing.state_mut() }, &chain_config_bytes)
-            .map_err(|e| anyhow!("write chain_config bytes: {e}"))?;
-    }
-
-    // Drive the migration steps.
+    // Drive the remaining migration steps (these come from Nitro's
+    // `InitializeArbosInDatabase`, not `InitializeArbosState`): import
+    // address-table contents and retryables. Bootstrap has already added the
+    // initial chain owner, so we don't call `chain_owners.add` here.
     let (balance_credits, escrow_credits) = {
         let state_ptr = harness.state_ptr();
         let arbos_state = harness.arbos_state();
-
-        arbos_state
-            .chain_owners
-            .add(unsafe { &mut *state_ptr }, ARB1_CHAIN_OWNER)
-            .map_err(|e| anyhow!("chain_owners.add: {e}"))?;
 
         let size = arbos_state
             .address_table
@@ -245,8 +218,7 @@ pub fn run(args: Arb1ArbosSynthesizeArgs) -> Result<()> {
     let arbos_storage_pairs: Vec<(U256, U256)> = arbos_pa
         .storage
         .iter()
-        .filter(|(_, v)| !v.is_zero())
-        .map(|(k, v)| (*k, *v))
+        .filter_map(|(k, v): (&U256, &U256)| (!v.is_zero()).then_some((*k, *v)))
         .collect();
     emit_account(
         &mut w,
