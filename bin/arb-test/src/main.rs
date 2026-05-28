@@ -1,4 +1,5 @@
 mod arb1_header;
+mod arb1_state_convert;
 mod fixture;
 mod genesis_capture;
 mod sepolia_import;
@@ -36,6 +37,9 @@ enum Command {
 
     /// Derive + verify a migrated chain's genesis header and write its spec.
     Arb1Header(arb1_header::Arb1HeaderArgs),
+
+    /// Convert a classic `arb_exportState` `accounts.json` to reth init-state JSONL.
+    Arb1StateConvert(arb1_state_convert::Arb1StateConvertArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -46,5 +50,6 @@ fn main() -> anyhow::Result<()> {
         Command::SepoliaImport(cmd) => sepolia_import::run(cmd),
         Command::StateDump(a) => state_dump::run(a),
         Command::Arb1Header(a) => arb1_header::run(a),
+        Command::Arb1StateConvert(a) => arb1_state_convert::run(a),
     }
 }

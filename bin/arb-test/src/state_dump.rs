@@ -199,7 +199,7 @@ fn geth_account_to_jsonl(addr_key: &str, acct: &Value) -> Result<Option<String>>
 
 /// Normalize a 20-byte address hex string to lowercase `0x`-prefixed form.
 /// Returns `None` for anything that is not 40 hex nibbles.
-fn normalize_address(s: &str) -> Option<String> {
+pub(crate) fn normalize_address(s: &str) -> Option<String> {
     let h = s.trim_start_matches("0x").trim_start_matches("0X");
     if h.len() != 40 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
@@ -208,7 +208,7 @@ fn normalize_address(s: &str) -> Option<String> {
 }
 
 /// Parse a decimal or `0x`-hex integer string into canonical `0x`-hex.
-fn decimal_or_hex_to_0x(s: &str) -> Result<String> {
+pub(crate) fn decimal_or_hex_to_0x(s: &str) -> Result<String> {
     let s = s.trim();
     let v = if let Some(h) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         U256::from_str_radix(h, 16).with_context(|| format!("hex int {s}"))?
@@ -219,13 +219,13 @@ fn decimal_or_hex_to_0x(s: &str) -> Result<String> {
 }
 
 /// Left-pad a hex value to a 32-byte `0x`-prefixed word.
-fn pad_b256(s: &str) -> String {
+pub(crate) fn pad_b256(s: &str) -> String {
     let h = s.trim_start_matches("0x").trim_start_matches("0X");
     let h = if h.len() > 64 { &h[h.len() - 64..] } else { h };
     format!("0x{:0>64}", h.to_ascii_lowercase())
 }
 
-fn with_0x(s: &str) -> String {
+pub(crate) fn with_0x(s: &str) -> String {
     if s.starts_with("0x") || s.starts_with("0X") {
         format!("0x{}", s[2..].to_ascii_lowercase())
     } else {
