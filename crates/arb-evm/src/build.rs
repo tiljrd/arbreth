@@ -1298,6 +1298,24 @@ where
                     let state_ref = unsafe { arb_state.backing_storage.state_mut() };
                     if let Ok(l1_block_number) = arb_state.blockhashes.l1_block_number(state_ref) {
                         self.arb_ctx.l1_block_number = l1_block_number;
+                        // Surface the post-StartBlock storage value to
+                        // precompiles. The header's mix_hash L1 value
+                        // (seeded into the BlockCtx initially) lags this by
+                        // 1 at `arbos_version < 8` per Nitro's
+                        // `internal_tx.go`.
+                        self.precompile_ctx
+                            .block
+                            .set_l1_block_number_recorded(l1_block_number);
+                        // Nitro's `opNumber` reads
+                        // `evm.ProcessingHook.L1BlockNumber(evm.Context)`
+                        // which returns the storage value. Mirror that by
+                        // updating revm's `BlockEnv.number` so the EVM
+                        // `NUMBER` opcode sees the same +1 adjustment.
+                        // The arb_number opcode handler also reads
+                        // this thread-local so the EVM NUMBER opcode
+                        // surfaces the recorded value rather than the
+                        // header's mix_hash L1 value.
+                        crate::evm::set_l1_block_number_recorded(l1_block_number);
                     }
 
                     load_state_params(
@@ -2251,7 +2269,7 @@ where
         Ok(output)
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+    fn commit_transaction(&mut self, mut output: Self::Result) -> Result<u64, BlockExecutionError> {
         // Extract info needed for fee distribution before the output is consumed.
         let pending = self.pending_tx.take();
         let gas_used_total = output.result.result.gas_used();
@@ -2282,6 +2300,36 @@ where
                     }
                 }
             }
+        }
+
+        // Nitro's `state_transition.go` calls `AddBalance(tipReceipient, fee)`
+        // where `tipReceipient` is the GasChargingHook return (NetworkFeeAccount)
+        // — NOT the block coinbase. revm's `reward_beneficiary` always targets
+        // `block.beneficiary()` (= sequencer/BATCH_POSTER on arb1) and, at
+        // SHANGHAI+, EIP-3651 unconditionally warms it. Both paths leave an
+        // empty-touched entry for the coinbase in `output.result.state` even
+        // when the tip mint is zero. Persisting that entry would create a
+        // state-trie deletion marker that Nitro never emits, breaking the
+        // post-tx state-root parity. Drop it before commit when the touch
+        // carries no actual state change.
+        let coinbase = self.arb_ctx.coinbase;
+        let coinbase_unchanged_touch = output
+            .result
+            .state
+            .get(&coinbase)
+            .map(|acct| {
+                let info = &acct.info;
+                acct.is_touched()
+                    && !acct.is_selfdestructed()
+                    && info.balance.is_zero()
+                    && info.nonce == 0
+                    && info.code_hash
+                        == alloy_primitives::B256::from(alloy_primitives::keccak256([]))
+                    && acct.storage.is_empty()
+            })
+            .unwrap_or(false);
+        if coinbase_unchanged_touch {
+            output.result.state.remove(&coinbase);
         }
 
         // Capture EVM-modified addresses for dirty tracking before commit consumes output.
@@ -2646,13 +2694,22 @@ where
                         let db: &mut State<DB> = self.inner.evm_mut().db_mut();
                         apply_fee_distribution(db, overlay, dist, None);
                     }
-                    // Skip the network-fee touch when compute cost is 0
-                    // (avoids a no-op EIP-161 touch).
+                    // Only mark a fee-distribution destination as touched when
+                    // the mint actually carried value. A no-op mint (amount=0
+                    // or a zero-address recipient) shouldn't create an empty
+                    // trie tombstone — Nitro's MintBalance is gated on amount,
+                    // and our apply_balance_op short-circuits the zero path.
                     if !dist.network_fee_amount.is_zero() {
                         self.touched_accounts.insert(dist.network_fee_account);
                     }
-                    self.touched_accounts.insert(dist.infra_fee_account);
-                    self.touched_accounts.insert(dist.poster_fee_destination);
+                    if !dist.infra_fee_amount.is_zero()
+                        && dist.infra_fee_account != Address::ZERO
+                    {
+                        self.touched_accounts.insert(dist.infra_fee_account);
+                    }
+                    if !dist.poster_fee_amount.is_zero() {
+                        self.touched_accounts.insert(dist.poster_fee_destination);
+                    }
 
                     let arbos_version_active = self.arb_ctx.arbos_version;
                     let basefee_active = self.arb_ctx.basefee;
@@ -2817,16 +2874,26 @@ where
         // Our zombie_accounts set approximates this — if a zombie is subsequently
         // dirtied by a non-zero transfer, it's removed from zombie_accounts
         // (matching Go's dirtyCount > zombieEntries check).
+        // Snapshot touched_accounts before draining so the diff log below
+        // can compare against what EIP-161 kept vs deleted.
+        let touched_snapshot: Vec<Address> = self.touched_accounts.iter().copied().collect();
+        let block_num_for_log = self.arb_ctx.l2_block_number;
+        let mut filter_reason: Vec<(Address, &'static str)> = Vec::new();
         {
             let keccak_empty = alloy_primitives::B256::from(alloy_primitives::keccak256([]));
             let overlay = &mut self.state_overlay;
             let db: &mut State<DB> = self.inner.evm_mut().db_mut();
+            let trace_filter =
+                tracing::enabled!(target: "arb::executor::eip161", tracing::Level::INFO);
             let to_remove: Vec<Address> = self
                 .touched_accounts
                 .drain()
                 .filter(|addr| {
                     // Zombie accounts must be preserved even if empty.
                     if self.zombie_accounts.contains(addr) {
+                        if trace_filter {
+                            filter_reason.push((*addr, "zombie-preserved"));
+                        }
                         return false;
                     }
                     if let Some(cached) = db.cache.accounts.get(addr) {
@@ -2834,12 +2901,48 @@ where
                             let is_empty = acct.info.nonce == 0
                                 && acct.info.balance.is_zero()
                                 && acct.info.code_hash == keccak_empty;
+                            if trace_filter {
+                                filter_reason.push((
+                                    *addr,
+                                    if is_empty { "empty-delete" } else { "non-empty-kept" },
+                                ));
+                            }
                             return is_empty;
                         }
+                        if trace_filter {
+                            filter_reason.push((*addr, "cache-some-account-none"));
+                        }
+                    } else if trace_filter {
+                        filter_reason.push((*addr, "not-in-cache"));
                     }
                     false
                 })
                 .collect();
+
+            if tracing::enabled!(target: "arb::executor::touched", tracing::Level::INFO) {
+                let kept: Vec<Address> = touched_snapshot
+                    .iter()
+                    .filter(|a| !to_remove.contains(a))
+                    .copied()
+                    .collect();
+                tracing::info!(
+                    target: "arb::executor::touched",
+                    block = block_num_for_log,
+                    touched_count = touched_snapshot.len(),
+                    deleted_count = to_remove.len(),
+                    kept = ?kept,
+                    deleted = ?to_remove,
+                    "post-tx touched-set"
+                );
+            }
+            if tracing::enabled!(target: "arb::executor::eip161", tracing::Level::INFO) {
+                tracing::info!(
+                    target: "arb::executor::eip161",
+                    block = block_num_for_log,
+                    reasons = ?filter_reason,
+                    "EIP-161 filter outcomes"
+                );
+            }
 
             // Mark deleted accounts as destroyed in the cache instead of
             // removing them. Removing from cache causes the NEXT transaction
@@ -2867,6 +2970,9 @@ where
     }
 
     fn finish(self) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
+        // Drop the per-block thread-local so subsequent blocks fall back to
+        // the BlockEnv-derived L1 height until their own StartBlock fires.
+        crate::evm::clear_l1_block_number_recorded();
         // Log if expected balance delta is non-zero (deposits/withdrawals occurred).
         if self.expected_balance_delta != 0 {
             tracing::trace!(
@@ -2988,7 +3094,19 @@ fn apply_balance_op<DB: Database>(
     amount: U256,
 ) -> Result<(), BalanceError> {
     if amount.is_zero() {
+        if tracing::enabled!(target: "arb::executor::balance", tracing::Level::TRACE) {
+            tracing::trace!(
+                target: "arb::executor::balance",
+                from = ?from, to = ?to, amount = "0", "no-op zero-amount balance op"
+            );
+        }
         return Ok(());
+    }
+    if tracing::enabled!(target: "arb::executor::balance", tracing::Level::INFO) {
+        tracing::info!(
+            target: "arb::executor::balance",
+            from = ?from, to = ?to, amount = %amount, "balance op"
+        );
     }
     match (from, to) {
         (Some(from_addr), Some(to_addr)) => {

@@ -52,13 +52,38 @@ const BLOCKHASH_OPCODE: u8 = 0x40;
 /// BALANCE opcode (0x31).
 const BALANCE_OPCODE: u8 = 0x31;
 
+thread_local! {
+    /// Post-`StartBlock` L1 block number for the current block, populated by
+    /// the executor before user txs run. Nitro's `opNumber` reads
+    /// `evm.ProcessingHook.L1BlockNumber()` (= storage value) which at
+    /// `arbos_version < 8` is the raw reported value + 1 — the mix_hash-derived
+    /// `block_env.number` lags by 1. When unset (e.g. during RPC `eth_call`),
+    /// fall back to `block_env.number`.
+    static L1_BLOCK_NUMBER_RECORDED: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Update the recorded L1 block number for the current block. Cleared at
+/// block end by [`clear_l1_block_number_recorded`].
+pub fn set_l1_block_number_recorded(value: u64) {
+    L1_BLOCK_NUMBER_RECORDED.with(|c| c.set(Some(value)));
+}
+
+/// Clear the recorded L1 block number. Called after block execution finishes
+/// so subsequent blocks fall back to `block_env.number` until their StartBlock.
+pub fn clear_l1_block_number_recorded() {
+    L1_BLOCK_NUMBER_RECORDED.with(|c| c.set(None));
+}
+
+fn l1_block_number_recorded() -> Option<u64> {
+    L1_BLOCK_NUMBER_RECORDED.with(|c| c.get())
+}
+
 /// Arbitrum NUMBER: returns the L1 block number recorded during StartBlock.
-///
-/// `block_env.number` is configured to hold the L1 block number for Arbitrum
-/// EVM execution; reading the host preserves consensus semantics without
-/// touching any per-thread global.
 fn arb_number<WIRE: InterpreterTypes, H: Host + ?Sized>(ctx: InstructionContext<'_, H, WIRE>) {
-    let l1_block = ctx.host.block_number();
+    let l1_block = match l1_block_number_recorded() {
+        Some(v) => U256::from(v),
+        None => ctx.host.block_number(),
+    };
     if !ctx.interpreter.stack.push(l1_block) {
         ctx.interpreter.halt(InstructionResult::StackOverflow);
     }
@@ -81,7 +106,10 @@ fn arb_blockhash<WIRE: InterpreterTypes, H: Host + ?Sized>(ctx: InstructionConte
         }
     };
 
-    let l1_block_number = ctx.host.block_number();
+    let l1_block_number = match l1_block_number_recorded() {
+        Some(v) => U256::from(v),
+        None => ctx.host.block_number(),
+    };
 
     let Some(diff) = l1_block_number.checked_sub(requested) else {
         if !ctx.interpreter.stack.push(U256::ZERO) {

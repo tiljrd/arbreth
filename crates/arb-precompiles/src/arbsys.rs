@@ -349,9 +349,12 @@ fn do_send_tx_to_l1(
 ) -> PrecompileResult {
     let caller = input.caller;
     let value = input.value;
-    // Read the L1 block number recorded by StartBlock. `block_env.number` holds
-    // the header's mix_hash L1 value, which can lag the StartBlock-updated one.
-    let l1_block_number = U256::from(ctx.block.l1_block_number_for_evm);
+    // Read the L1 block number recorded by StartBlock. Nitro's
+    // `txProcessor.L1BlockNumber()` reads `state.Blockhashes().L1BlockNumber()`
+    // which is the storage value after `apply_start_block`'s pre-v8 `+1`
+    // adjustment — distinct from the header's mix_hash L1 value used by the
+    // `NUMBER` opcode.
+    let l1_block_number = U256::from(ctx.block.l1_block_number_recorded());
     let l2_block_number = U256::from(ctx.block.l2_block_number);
     let timestamp = input.internals().block_timestamp();
 
