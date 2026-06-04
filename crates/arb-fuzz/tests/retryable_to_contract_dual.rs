@@ -15,12 +15,9 @@
 //!   ARB_SPEC_BINARY=$(pwd)/target/release/arb-reth \
 //!     cargo test -p arb-fuzz --test retryable_to_contract_dual --release -- --ignored --nocapture
 //!
-//! STATUS: v60 passes clean. v6/v9/v11 currently DIVERGE — the state root
-//! differs from the auto-redeem block onward while every tx receipt, log and
-//! probed account value matches, i.e. an account exists-empty in one trie and
-//! is absent in the other (tombstone class). Isolation shows it is the
-//! auto-redeem path (cases a and b) not the submit/escrow path (case c, clean).
-//! This reproduces the arb1 block-22,209,702 pattern. Under investigation.
+//! STATUS: clean at v6/v9/v11/v60. The v6/v9/v11 zero-callvalue auto-redeem
+//! tombstone (arbreth dropped an empty escrow leaf Nitro keeps as a zombie at
+//! ArbOS<30) is fixed (commit 82db241: zero-value mint touch-if-empty).
 
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -222,9 +219,25 @@ fn assert_clean_at(version: u64) {
     let t = 1_700_000_000u64;
 
     // Block 1: fund the deployer, deploy STORE + REVERT.
-    steps.push(deposit(idx.next(), deployer, U256::from(10u128).pow(U256::from(18u64)), 1, t));
-    steps.push(msg(idx.next(), deploy(0, &store_runtime(), 1, t).build().expect("deploy store")));
-    steps.push(msg(idx.next(), deploy(1, &revert_runtime(), 1, t).build().expect("deploy revert")));
+    steps.push(deposit(
+        idx.next(),
+        deployer,
+        U256::from(10u128).pow(U256::from(18u64)),
+        1,
+        t,
+    ));
+    steps.push(msg(
+        idx.next(),
+        deploy(0, &store_runtime(), 1, t)
+            .build()
+            .expect("deploy store"),
+    ));
+    steps.push(msg(
+        idx.next(),
+        deploy(1, &revert_runtime(), 1, t)
+            .build()
+            .expect("deploy revert"),
+    ));
 
     // Block 2: submit retryables targeting the deployed contracts.
     let l1_sender_a = Address::repeat_byte(0x51);
@@ -234,23 +247,47 @@ fn assert_clean_at(version: u64) {
     // (a) auto-redeem to STORE: inner code runs, slot 0 := 0x2a, ticket deleted.
     steps.push(msg(
         idx.next(),
-        submit_retryable(l1_sender_a, store, 200_000, U256::ZERO, 2, t + 4, req_id(0xa1))
-            .build()
-            .expect("submit->store"),
+        submit_retryable(
+            l1_sender_a,
+            store,
+            200_000,
+            U256::ZERO,
+            2,
+            t + 4,
+            req_id(0xa1),
+        )
+        .build()
+        .expect("submit->store"),
     ));
     // (b) auto-redeem to REVERT: retry fails, ticket retained, fee not refunded.
     steps.push(msg(
         idx.next(),
-        submit_retryable(l1_sender_b, revert_c, 200_000, U256::ZERO, 2, t + 4, req_id(0xb2))
-            .build()
-            .expect("submit->revert"),
+        submit_retryable(
+            l1_sender_b,
+            revert_c,
+            200_000,
+            U256::ZERO,
+            2,
+            t + 4,
+            req_id(0xb2),
+        )
+        .build()
+        .expect("submit->revert"),
     ));
     // (c) gas_limit=0: no auto-redeem, ticket sits in escrow with callvalue.
     steps.push(msg(
         idx.next(),
-        submit_retryable(l1_sender_c, store, 0, U256::from(12_345u64), 2, t + 4, req_id(0xc3))
-            .build()
-            .expect("submit no-redeem"),
+        submit_retryable(
+            l1_sender_c,
+            store,
+            0,
+            U256::from(12_345u64),
+            2,
+            t + 4,
+            req_id(0xc3),
+        )
+        .build()
+        .expect("submit no-redeem"),
     ));
 
     let scenario = Scenario {
@@ -289,9 +326,21 @@ fn run_single(version: u64, case: char) {
     let store = create_address(deployer, 0);
     let revert_c = create_address(deployer, 1);
     let t = 1_700_000_000u64;
-    steps.push(deposit(idx.next(), deployer, U256::from(10u128).pow(U256::from(18u64)), 1, t));
-    steps.push(msg(idx.next(), deploy(0, &store_runtime(), 1, t).build().unwrap()));
-    steps.push(msg(idx.next(), deploy(1, &revert_runtime(), 1, t).build().unwrap()));
+    steps.push(deposit(
+        idx.next(),
+        deployer,
+        U256::from(10u128).pow(U256::from(18u64)),
+        1,
+        t,
+    ));
+    steps.push(msg(
+        idx.next(),
+        deploy(0, &store_runtime(), 1, t).build().unwrap(),
+    ));
+    steps.push(msg(
+        idx.next(),
+        deploy(1, &revert_runtime(), 1, t).build().unwrap(),
+    ));
     let l1s = Address::repeat_byte(0x51);
     let sub = match case {
         'a' => submit_retryable(l1s, store, 200_000, U256::ZERO, 2, t + 4, req_id(0xa1)),
@@ -299,26 +348,49 @@ fn run_single(version: u64, case: char) {
         'c' => submit_retryable(l1s, store, 0, U256::from(12_345u64), 2, t + 4, req_id(0xc3)),
         // (d) success redeem WITH callvalue: escrow is still drained to empty on
         //     success, so it should diverge like (a) if the empty escrow is the cause.
-        'd' => submit_retryable(l1s, store, 200_000, U256::from(12_345u64), 2, t + 4, req_id(0xd4)),
+        'd' => submit_retryable(
+            l1s,
+            store,
+            200_000,
+            U256::from(12_345u64),
+            2,
+            t + 4,
+            req_id(0xd4),
+        ),
         // (e) revert redeem WITH callvalue: the failed redeem RETAINS the callvalue
         //     in escrow, so the escrow stays non-empty. If (e) is clean while
         //     (b) (callvalue=0) diverges, the empty escrow's tombstone is the cause.
-        'e' => submit_retryable(l1s, revert_c, 200_000, U256::from(12_345u64), 2, t + 4, req_id(0xe5)),
+        'e' => submit_retryable(
+            l1s,
+            revert_c,
+            200_000,
+            U256::from(12_345u64),
+            2,
+            t + 4,
+            req_id(0xe5),
+        ),
         _ => unreachable!(),
     };
     steps.push(msg(idx.next(), sub.build().unwrap()));
     let scenario = Scenario {
         name: format!("retryable_single_{case}_v{version}"),
         description: format!("isolated retryable case {case} at v{version}"),
-        setup: ScenarioSetup { l2_chain_id: L2_CHAIN_ID, arbos_version: version, genesis: None },
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: version,
+            genesis: None,
+        },
         steps,
     };
     let report = rig.dual.run(&scenario).expect("run");
     assert!(
         report.is_clean(),
         "case {case} v{version}: block_diffs={} tx_diffs={} state_diffs={} log_diffs={}\n{:#?}",
-        report.block_diffs.len(), report.tx_diffs.len(), report.state_diffs.len(),
-        report.log_diffs.len(), report
+        report.block_diffs.len(),
+        report.tx_diffs.len(),
+        report.state_diffs.len(),
+        report.log_diffs.len(),
+        report
     );
 }
 
@@ -348,18 +420,36 @@ fn diff_accounts_autoredeem_at(version: u64) {
     let deployer = derive_address(deployer_key());
     let store = create_address(deployer, 0);
     let t = 1_700_000_000u64;
-    steps.push(deposit(idx.next(), deployer, U256::from(10u128).pow(U256::from(18u64)), 1, t));
-    steps.push(msg(idx.next(), deploy(0, &store_runtime(), 1, t).build().unwrap()));
-    steps.push(msg(idx.next(), deploy(1, &revert_runtime(), 1, t).build().unwrap()));
+    steps.push(deposit(
+        idx.next(),
+        deployer,
+        U256::from(10u128).pow(U256::from(18u64)),
+        1,
+        t,
+    ));
+    steps.push(msg(
+        idx.next(),
+        deploy(0, &store_runtime(), 1, t).build().unwrap(),
+    ));
+    steps.push(msg(
+        idx.next(),
+        deploy(1, &revert_runtime(), 1, t).build().unwrap(),
+    ));
     let l1s = Address::repeat_byte(0x51);
     steps.push(msg(
         idx.next(),
-        submit_retryable(l1s, store, 200_000, U256::ZERO, 2, t + 4, req_id(0xa1)).build().unwrap(),
+        submit_retryable(l1s, store, 200_000, U256::ZERO, 2, t + 4, req_id(0xa1))
+            .build()
+            .unwrap(),
     ));
     let scenario = Scenario {
         name: "diag".into(),
         description: "diag".into(),
-        setup: ScenarioSetup { l2_chain_id: L2_CHAIN_ID, arbos_version: version, genesis: None },
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: version,
+            genesis: None,
+        },
         steps,
     };
     let _ = rig.dual.run(&scenario).expect("run");
@@ -368,23 +458,50 @@ fn diff_accounts_autoredeem_at(version: u64) {
     for b in 0..=latest {
         let bid = BlockId::Number(b);
         let dep_nonce = rig.dual.right.nonce(deployer, bid.clone()).unwrap_or(0);
-        let dep_bal = rig.dual.right.balance(deployer, bid.clone()).unwrap_or(U256::ZERO);
-        let store_code = rig.dual.right.code(store, bid.clone()).map(|c| c.len()).unwrap_or(0);
+        let dep_bal = rig
+            .dual
+            .right
+            .balance(deployer, bid.clone())
+            .unwrap_or(U256::ZERO);
+        let store_code = rig
+            .dual
+            .right
+            .code(store, bid.clone())
+            .map(|c| c.len())
+            .unwrap_or(0);
         eprintln!("block {b}: deployer nonce={dep_nonce} bal={dep_bal} store_codelen={store_code}");
     }
     let at = BlockId::Number(latest);
     let candidates: [(&str, Address); 11] = [
         ("aliased_sender", apply_l1_to_l2_alias(l1s)),
-        ("excess_fee_refund", address!("000000000000000000000000000000000fee0001")),
-        ("call_value_refund", address!("000000000000000000000000000000000bef0001")),
+        (
+            "excess_fee_refund",
+            address!("000000000000000000000000000000000fee0001"),
+        ),
+        (
+            "call_value_refund",
+            address!("000000000000000000000000000000000bef0001"),
+        ),
         ("store", store),
         ("owner/networkfee", owner),
-        ("l1_pricer_pool", address!("a4b00000000000000000000000000000000000f6")),
+        (
+            "l1_pricer_pool",
+            address!("a4b00000000000000000000000000000000000f6"),
+        ),
         ("batch_poster", SEQUENCER_ALIAS),
-        ("arbsys_0x64", address!("0000000000000000000000000000000000000064")),
-        ("escrow", arbos::retryables::retryable_escrow_address(req_id(0xa1))),
+        (
+            "arbsys_0x64",
+            address!("0000000000000000000000000000000000000064"),
+        ),
+        (
+            "escrow",
+            arbos::retryables::retryable_escrow_address(req_id(0xa1)),
+        ),
         ("zero", Address::ZERO),
-        ("arbos_state", address!("a4b05fffffffffffffffffffffffffffffffffff")),
+        (
+            "arbos_state",
+            address!("a4b05fffffffffffffffffffffffffffffffffff"),
+        ),
     ];
     // eth_getProof existence probe: codeHash == keccak("") (0xc5d2..) => account
     // EXISTS (even if empty); == 0x000..0 => ABSENT. This is the only way to see
@@ -410,10 +527,27 @@ fn diff_accounts_autoredeem_at(version: u64) {
     for (name, a) in candidates {
         let lh = exists(&left_rpc, a);
         let rh = exists(&right_rpc, a);
-        let lc = rig.dual.left.code(a, at.clone()).map(|c| c.len()).unwrap_or(0);
-        let rc = rig.dual.right.code(a, at.clone()).map(|c| c.len()).unwrap_or(0);
-        let tag = if lh != rh { any = true; "DIFF" } else { "ok  " };
-        eprintln!("{tag} v{version} {name} {a:?}: codeHash nitro={lh} arbreth={rh} (codelen {lc}/{rc})");
+        let lc = rig
+            .dual
+            .left
+            .code(a, at.clone())
+            .map(|c| c.len())
+            .unwrap_or(0);
+        let rc = rig
+            .dual
+            .right
+            .code(a, at.clone())
+            .map(|c| c.len())
+            .unwrap_or(0);
+        let tag = if lh != rh {
+            any = true;
+            "DIFF"
+        } else {
+            "ok  "
+        };
+        eprintln!(
+            "{tag} v{version} {name} {a:?}: codeHash nitro={lh} arbreth={rh} (codelen {lc}/{rc})"
+        );
     }
     eprintln!("v{version}: any_existence_diff={any}");
 }

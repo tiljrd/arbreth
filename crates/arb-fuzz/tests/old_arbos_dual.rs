@@ -18,9 +18,10 @@
 //! A deploy-landed guard fails loudly if the contract tx is dropped (e.g. gas
 //! below poster cost) so a clean report cannot be a hollow no-op agreement.
 //!
-//! STATUS: v6/v7/v8 pass clean. v9 currently DIVERGES — one tx reports
-//! gas_used 110600 on Nitro vs 917000 on arbreth; v9 is the always-collect-
-//! tips island. Under investigation, not yet root-caused.
+//! STATUS: clean at v6/v7/v8/v9. The v9 legacy-tx gas/tip divergence (revm
+//! reports no priority fee for legacy/2930 txs; arbreth had mis-priced them at
+//! base fee, inflating posterGas 10x and mis-routing the tip) is fixed in
+//! commit deef765.
 
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -36,7 +37,9 @@ use arb_test_harness::{
         DepositBuilder, L1Message, MessageBuilder,
     },
     mock_l1::MockL1,
-    node::{arbreth::ArbrethProcess, nitro_docker::NitroDocker, BlockId, ExecutionNode, NodeStartCtx},
+    node::{
+        arbreth::ArbrethProcess, nitro_docker::NitroDocker, BlockId, ExecutionNode, NodeStartCtx,
+    },
     scenario::{Scenario, ScenarioSetup, ScenarioStep},
 };
 
@@ -259,14 +262,22 @@ fn assert_clean_at(version: u64) {
 
     // Guard against a hollow pass: the deploy must have landed (else the call
     // hits an empty account and both nodes trivially agree on a no-op).
-    let latest = rig.dual.right.block(BlockId::Latest).expect("latest").number;
+    let latest = rig
+        .dual
+        .right
+        .block(BlockId::Latest)
+        .expect("latest")
+        .number;
     let code_len = rig
         .dual
         .right
         .code(deployed, BlockId::Number(latest))
         .map(|c| c.len())
         .unwrap_or(0);
-    assert!(code_len > 0, "deploy did not land (code empty) — test would be hollow");
+    assert!(
+        code_len > 0,
+        "deploy did not land (code empty) — test would be hollow"
+    );
 
     assert!(
         report.is_clean(),
@@ -307,11 +318,47 @@ fn dump_gas_at(version: u64) {
         .unwrap(),
     ));
     let i = idx.next();
-    steps.push(msg_step(i, payer_tx(0, Some(recipient), U256::from(1_000_000u64), Vec::new(), 1_000_000, L2TxKind::Eip1559).build().unwrap()));
+    steps.push(msg_step(
+        i,
+        payer_tx(
+            0,
+            Some(recipient),
+            U256::from(1_000_000u64),
+            Vec::new(),
+            1_000_000,
+            L2TxKind::Eip1559,
+        )
+        .build()
+        .unwrap(),
+    ));
     let i = idx.next();
-    steps.push(msg_step(i, payer_tx(1, Some(recipient), U256::from(2_000_000u64), Vec::new(), 1_000_000, L2TxKind::Legacy).build().unwrap()));
+    steps.push(msg_step(
+        i,
+        payer_tx(
+            1,
+            Some(recipient),
+            U256::from(2_000_000u64),
+            Vec::new(),
+            1_000_000,
+            L2TxKind::Legacy,
+        )
+        .build()
+        .unwrap(),
+    ));
     let i = idx.next();
-    steps.push(msg_step(i, payer_tx(2, None, U256::ZERO, DEPLOY_INIT.to_vec(), 30_000_000, L2TxKind::Eip1559).build().unwrap()));
+    steps.push(msg_step(
+        i,
+        payer_tx(
+            2,
+            None,
+            U256::ZERO,
+            DEPLOY_INIT.to_vec(),
+            30_000_000,
+            L2TxKind::Eip1559,
+        )
+        .build()
+        .unwrap(),
+    ));
     let deployed = {
         use alloy_primitives::keccak256;
         let mut rlp = Vec::with_capacity(23);
@@ -322,12 +369,28 @@ fn dump_gas_at(version: u64) {
         Address::from_slice(&keccak256(&rlp)[12..])
     };
     let i = idx.next();
-    steps.push(msg_step(i, payer_tx(3, Some(deployed), U256::ZERO, Vec::new(), 1_000_000, L2TxKind::Eip1559).build().unwrap()));
+    steps.push(msg_step(
+        i,
+        payer_tx(
+            3,
+            Some(deployed),
+            U256::ZERO,
+            Vec::new(),
+            1_000_000,
+            L2TxKind::Eip1559,
+        )
+        .build()
+        .unwrap(),
+    ));
 
     let scenario = Scenario {
         name: format!("gas_diag_v{version}"),
         description: "gas diag".into(),
-        setup: ScenarioSetup { l2_chain_id: L2_CHAIN_ID, arbos_version: version, genesis: None },
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: version,
+            genesis: None,
+        },
         steps,
     };
     let report = rig.dual.run(&scenario).expect("run");
@@ -338,22 +401,34 @@ fn dump_gas_at(version: u64) {
         report.tx_diffs.len()
     );
     for d in &report.tx_diffs {
-        eprintln!("  REPORT-TXDIFF tx={:?} field={} left={} right={}", d.tx_hash, d.field, d.left, d.right);
+        eprintln!(
+            "  REPORT-TXDIFF tx={:?} field={} left={} right={}",
+            d.tx_hash, d.field, d.left, d.right
+        );
     }
     let lrpc = JsonRpcClient::new(rig.dual.left.rpc_url().to_string());
     let rrpc = JsonRpcClient::new(rig.dual.right.rpc_url().to_string());
     let latest = rig.dual.left.block(BlockId::Latest).expect("latest").number;
     let field = |v: &serde_json::Value, k: &str| -> String {
-        v.get(k).and_then(|x| x.as_str()).map(|s| {
-            u128::from_str_radix(s.trim_start_matches("0x"), 16).map(|n| n.to_string()).unwrap_or_else(|_| s.to_string())
-        }).unwrap_or_else(|| "-".into())
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .map(|s| {
+                u128::from_str_radix(s.trim_start_matches("0x"), 16)
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|_| s.to_string())
+            })
+            .unwrap_or_else(|| "-".into())
     };
     for b in 1..=latest {
         let blk = rig.dual.left.block(BlockId::Number(b)).expect("blk");
         for h in &blk.tx_hashes {
             let hs = format!("{h:?}");
-            let lr = lrpc.call("eth_getTransactionReceipt", serde_json::json!([hs])).unwrap_or(serde_json::Value::Null);
-            let rr = rrpc.call("eth_getTransactionReceipt", serde_json::json!([hs])).unwrap_or(serde_json::Value::Null);
+            let lr = lrpc
+                .call("eth_getTransactionReceipt", serde_json::json!([hs]))
+                .unwrap_or(serde_json::Value::Null);
+            let rr = rrpc
+                .call("eth_getTransactionReceipt", serde_json::json!([hs]))
+                .unwrap_or(serde_json::Value::Null);
             let lg = field(&lr, "gasUsed");
             let rg = field(&rr, "gasUsed");
             let tag = if lg != rg { "DIFF" } else { "ok  " };
@@ -373,7 +448,10 @@ fn dump_gas_at(version: u64) {
         ("payer/owner/networkfee", payer),
         ("recipient", recipient),
         ("coinbase/sequencer", SEQUENCER_ALIAS),
-        ("l1_pricer_pool", address!("a4b00000000000000000000000000000000000f6")),
+        (
+            "l1_pricer_pool",
+            address!("a4b00000000000000000000000000000000000f6"),
+        ),
         ("deployed", deployed),
         ("zero", Address::ZERO),
     ];
@@ -381,8 +459,14 @@ fn dump_gas_at(version: u64) {
         let lb = rig.dual.left.balance(a, at.clone()).unwrap_or(U256::ZERO);
         let rb = rig.dual.right.balance(a, at.clone()).unwrap_or(U256::ZERO);
         let tag = if lb != rb { "BAL-DIFF" } else { "bal-ok  " };
-        eprintln!("{tag} v{version} {name} {a:?}: nitro={lb} arbreth={rb} delta={}",
-            if lb >= rb { format!("-{}", lb - rb) } else { format!("+{}", rb - lb) });
+        eprintln!(
+            "{tag} v{version} {name} {a:?}: nitro={lb} arbreth={rb} delta={}",
+            if lb >= rb {
+                format!("-{}", lb - rb)
+            } else {
+                format!("+{}", rb - lb)
+            }
+        );
     }
 }
 

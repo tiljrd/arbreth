@@ -23,7 +23,9 @@ use arb_test_harness::{
         DepositBuilder, L1Message, MessageBuilder,
     },
     mock_l1::MockL1,
-    node::{arbreth::ArbrethProcess, nitro_docker::NitroDocker, BlockId, ExecutionNode, NodeStartCtx},
+    node::{
+        arbreth::ArbrethProcess, nitro_docker::NitroDocker, BlockId, ExecutionNode, NodeStartCtx,
+    },
     scenario::{Scenario, ScenarioSetup, ScenarioStep},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -110,9 +112,7 @@ fn caller_static_runtime(target: Address) -> Vec<u8> {
 
 /// CALL a reverting `target` (success=0); store success at slot 0.
 fn caller_revert_runtime(target: Address) -> Vec<u8> {
-    let mut v = vec![
-        0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00,
-    ]; // retLen,retOff,argLen,argOff,value
+    let mut v = vec![0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]; // retLen,retOff,argLen,argOff,value
     v.extend_from_slice(&push20(target));
     v.extend_from_slice(&[0x5a, 0xf1, 0x60, 0x00, 0x55, 0x00]); // GAS,CALL,SSTORE(0,success),STOP
     v
@@ -160,7 +160,12 @@ impl Idx {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn deploy_or_call(nonce: u64, to: Option<Address>, value: U256, data: Vec<u8>) -> SignedL2TxBuilder {
+fn deploy_or_call(
+    nonce: u64,
+    to: Option<Address>,
+    value: U256,
+    data: Vec<u8>,
+) -> SignedL2TxBuilder {
     SignedL2TxBuilder {
         chain_id: L2_CHAIN_ID,
         nonce,
@@ -279,11 +284,28 @@ fn assert_clean_at(version: u64) {
     // Guard against a hollow pass: if the deploys had been dropped (e.g. gas
     // below poster cost) both nodes would no-op identically and the report
     // would be trivially clean. Require the contracts to actually carry code.
-    let latest = rig.dual.right.block(BlockId::Latest).expect("latest").number;
+    let latest = rig
+        .dual
+        .right
+        .block(BlockId::Latest)
+        .expect("latest")
+        .number;
     let at = BlockId::Number(latest);
-    for (name, a) in [("store", store), ("caller_value", caller_value), ("revert", revert_c)] {
-        let n = rig.dual.right.code(a, at.clone()).map(|c| c.len()).unwrap_or(0);
-        assert!(n > 0, "deploy of {name} did not land (code empty) — test would be hollow");
+    for (name, a) in [
+        ("store", store),
+        ("caller_value", caller_value),
+        ("revert", revert_c),
+    ] {
+        let n = rig
+            .dual
+            .right
+            .code(a, at.clone())
+            .map(|c| c.len())
+            .unwrap_or(0);
+        assert!(
+            n > 0,
+            "deploy of {name} did not land (code empty) — test would be hollow"
+        );
     }
 
     assert!(
