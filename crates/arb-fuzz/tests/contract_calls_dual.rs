@@ -23,7 +23,7 @@ use arb_test_harness::{
         DepositBuilder, L1Message, MessageBuilder,
     },
     mock_l1::MockL1,
-    node::{arbreth::ArbrethProcess, nitro_docker::NitroDocker, NodeStartCtx},
+    node::{arbreth::ArbrethProcess, nitro_docker::NitroDocker, BlockId, ExecutionNode, NodeStartCtx},
     scenario::{Scenario, ScenarioSetup, ScenarioStep},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -167,7 +167,11 @@ fn deploy_or_call(nonce: u64, to: Option<Address>, value: U256, data: Vec<u8>) -
         to,
         value,
         data: Bytes::from(data),
-        gas_limit: 1_000_000,
+        // High gas + low L1 base fee so the poster-cost component cannot exceed
+        // the limit and silently drop the tx (a dropped deploy would leave the
+        // call targets code-less, making the dual-exec trivially agree on a
+        // no-op — a false pass).
+        gas_limit: 30_000_000,
         gas_price: 1_000_000_000,
         max_fee_per_gas: 1_000_000_000,
         max_priority_fee_per_gas: 0,
@@ -179,7 +183,7 @@ fn deploy_or_call(nonce: u64, to: Option<Address>, value: U256, data: Vec<u8>) -
         timestamp: 1_700_000_000,
         request_id: None,
         sender: SEQUENCER_ALIAS,
-        base_fee_l1: L1_BASE_FEE,
+        base_fee_l1: 100_000_000,
     }
 }
 
@@ -271,6 +275,17 @@ fn assert_clean_at(version: u64) {
     };
 
     let report = rig.dual.run(&scenario).expect("run scenario");
+
+    // Guard against a hollow pass: if the deploys had been dropped (e.g. gas
+    // below poster cost) both nodes would no-op identically and the report
+    // would be trivially clean. Require the contracts to actually carry code.
+    let latest = rig.dual.right.block(BlockId::Latest).expect("latest").number;
+    let at = BlockId::Number(latest);
+    for (name, a) in [("store", store), ("caller_value", caller_value), ("revert", revert_c)] {
+        let n = rig.dual.right.code(a, at.clone()).map(|c| c.len()).unwrap_or(0);
+        assert!(n > 0, "deploy of {name} did not land (code empty) — test would be hollow");
+    }
+
     assert!(
         report.is_clean(),
         "ArbOS v{version} contract-call surface diverged from Nitro:\n\

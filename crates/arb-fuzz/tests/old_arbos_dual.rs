@@ -14,6 +14,13 @@
 //! Run (needs Docker + a release arb-reth):
 //!   ARB_SPEC_BINARY=$(pwd)/target/release/arb-reth \
 //!     cargo test -p arb-fuzz --test old_arbos_dual --release -- --ignored --nocapture
+//!
+//! A deploy-landed guard fails loudly if the contract tx is dropped (e.g. gas
+//! below poster cost) so a clean report cannot be a hollow no-op agreement.
+//!
+//! STATUS: v6/v7/v8 pass clean. v9 currently DIVERGES — one tx reports
+//! gas_used 110600 on Nitro vs 917000 on arbreth; v9 is the always-collect-
+//! tips island. Under investigation, not yet root-caused.
 
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -29,7 +36,7 @@ use arb_test_harness::{
         DepositBuilder, L1Message, MessageBuilder,
     },
     mock_l1::MockL1,
-    node::{arbreth::ArbrethProcess, nitro_docker::NitroDocker, NodeStartCtx},
+    node::{arbreth::ArbrethProcess, nitro_docker::NitroDocker, BlockId, ExecutionNode, NodeStartCtx},
     scenario::{Scenario, ScenarioSetup, ScenarioStep},
 };
 
@@ -130,7 +137,10 @@ fn payer_tx(
         timestamp: 1_700_000_000,
         request_id: None,
         sender: SEQUENCER_ALIAS,
-        base_fee_l1: L1_BASE_FEE,
+        // Low L1 base fee so the poster-cost component stays well under the gas
+        // limit; otherwise a deploy/call tx is silently dropped (nonce never
+        // bumped) and the dual-exec would trivially agree on a no-op.
+        base_fee_l1: 100_000_000,
     }
 }
 
@@ -170,7 +180,7 @@ fn assert_clean_at(version: u64) {
             Some(recipient),
             U256::from(1_000_000u64),
             Vec::new(),
-            100_000,
+            1_000_000,
             L2TxKind::Eip1559,
         )
         .build()
@@ -186,7 +196,7 @@ fn assert_clean_at(version: u64) {
             Some(recipient),
             U256::from(2_000_000u64),
             Vec::new(),
-            100_000,
+            1_000_000,
             L2TxKind::Legacy,
         )
         .build()
@@ -202,7 +212,7 @@ fn assert_clean_at(version: u64) {
             None,
             U256::ZERO,
             DEPLOY_INIT.to_vec(),
-            200_000,
+            30_000_000,
             L2TxKind::Eip1559,
         )
         .build()
@@ -227,7 +237,7 @@ fn assert_clean_at(version: u64) {
             Some(deployed),
             U256::ZERO,
             Vec::new(),
-            100_000,
+            1_000_000,
             L2TxKind::Eip1559,
         )
         .build()
@@ -246,6 +256,18 @@ fn assert_clean_at(version: u64) {
     };
 
     let report = rig.dual.run(&scenario).expect("run scenario");
+
+    // Guard against a hollow pass: the deploy must have landed (else the call
+    // hits an empty account and both nodes trivially agree on a no-op).
+    let latest = rig.dual.right.block(BlockId::Latest).expect("latest").number;
+    let code_len = rig
+        .dual
+        .right
+        .code(deployed, BlockId::Number(latest))
+        .map(|c| c.len())
+        .unwrap_or(0);
+    assert!(code_len > 0, "deploy did not land (code empty) — test would be hollow");
+
     assert!(
         report.is_clean(),
         "ArbOS v{version} core-tx surface diverged from Nitro:\n\
