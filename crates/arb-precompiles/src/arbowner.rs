@@ -4,7 +4,12 @@ use alloy_sol_types::{SolEvent, SolInterface};
 use arb_context::ArbPrecompileCtx;
 use arb_primitives::multigas::NUM_RESOURCE_KIND;
 use arb_storage::ARBOS_STATE_ADDRESS;
-use arbos::{address_set::AddressSet, programs::params::StylusParams};
+use arbos::{
+    address_set::AddressSet,
+    programs::params::{
+        StylusParams, COST_SCALAR_PERCENT, MIN_CACHED_GAS_UNITS, MIN_INIT_GAS_UNITS,
+    },
+};
 use revm::{
     precompile::{PrecompileId, PrecompileOutput, PrecompileResult},
     primitives::Log,
@@ -38,23 +43,34 @@ pub fn create_arbowner_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
 }
 
 fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> PrecompileResult {
+    // Access-controlled methods report zero gas at the receipt; the per-tx
+    // multi-gas accumulator must also reflect that so they cannot escalate the
+    // v60 backlog. Snapshot here and restore on every return path.
+    let mg_snapshot = ctx.snapshot_precompile_multi_gas();
     let mut gas_used = 0u64;
     let gas_limit = input.gas;
     let data = input.data;
     if data.len() < 4 {
+        ctx.restore_precompile_multi_gas(mg_snapshot);
         return crate::burn_all_revert(gas_limit);
     }
     let selector: [u8; 4] = [data[0], data[1], data[2], data[3]];
 
-    verify_owner(&mut input, &mut gas_used, ctx)?;
+    if let Err(e) = verify_owner(&mut input, &mut gas_used, ctx) {
+        ctx.restore_precompile_multi_gas(mg_snapshot);
+        return Err(e.into());
+    }
 
     let call = match IArbOwner::ArbOwnerCalls::abi_decode(data) {
         Ok(c) => c,
-        Err(_) => return crate::burn_all_revert(gas_limit),
+        Err(_) => {
+            ctx.restore_precompile_multi_gas(mg_snapshot);
+            return crate::burn_all_revert(gas_limit);
+        }
     };
 
     gas_used = 0;
-    crate::init_precompile_gas(&mut gas_used, data.len());
+    crate::init_precompile_gas(&mut gas_used, ctx, data.len());
 
     use IArbOwner::ArbOwnerCalls as Calls;
     let is_read_only = matches!(
@@ -253,42 +269,38 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
-            write_stylus_param(
-                &mut input,
-                &mut gas_used,
-                |p| p.free_pages = val as u16,
-                ctx,
-            )
+            let val = read_u16_param(gas_used, data, 0)?;
+            write_stylus_param(&mut input, &mut gas_used, |p| p.free_pages = val, ctx)
         }
         Calls::setWasmPageGas(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
-            write_stylus_param(&mut input, &mut gas_used, |p| p.page_gas = val as u16, ctx)
+            let val = read_u16_param(gas_used, data, 0)?;
+            write_stylus_param(&mut input, &mut gas_used, |p| p.page_gas = val, ctx)
         }
         Calls::setWasmPageLimit(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
-            write_stylus_param(
-                &mut input,
-                &mut gas_used,
-                |p| p.page_limit = val as u16,
-                ctx,
-            )
+            let val = read_u16_param(gas_used, data, 0)?;
+            write_stylus_param(&mut input, &mut gas_used, |p| p.page_limit = val, ctx)
         }
         Calls::setWasmMinInitGas(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
+            let gas = read_u8_param(gas_used, data, 0)?;
+            let cached = read_u16_param(gas_used, data, 1)?;
+            let min_init_gas = saturating_u8(div_ceil(gas as u64, MIN_INIT_GAS_UNITS));
+            let min_cached_init_gas = saturating_u8(div_ceil(cached as u64, MIN_CACHED_GAS_UNITS));
             write_stylus_param(
                 &mut input,
                 &mut gas_used,
-                |p| p.min_init_gas = val as u8,
+                |p| {
+                    p.min_init_gas = min_init_gas;
+                    p.min_cached_init_gas = min_cached_init_gas;
+                },
                 ctx,
             )
         }
@@ -296,13 +308,12 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
-            // Stored as DivCeil(percent, 2); the reader multiplies by 2.
-            let stored = (val as u64).saturating_add(1) / 2;
+            let percent = read_u64_param(gas_used, data)?;
+            let stored = saturating_u8(div_ceil(percent, COST_SCALAR_PERCENT));
             write_stylus_param(
                 &mut input,
                 &mut gas_used,
-                |p| p.init_cost_scalar = stored as u8,
+                |p| p.init_cost_scalar = stored,
                 ctx,
             )
         }
@@ -310,37 +321,22 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
-            write_stylus_param(
-                &mut input,
-                &mut gas_used,
-                |p| p.expiry_days = val as u16,
-                ctx,
-            )
+            let val = read_u16_param(gas_used, data, 0)?;
+            write_stylus_param(&mut input, &mut gas_used, |p| p.expiry_days = val, ctx)
         }
         Calls::setWasmKeepaliveDays(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
-            write_stylus_param(
-                &mut input,
-                &mut gas_used,
-                |p| p.keepalive_days = val as u16,
-                ctx,
-            )
+            let val = read_u16_param(gas_used, data, 0)?;
+            write_stylus_param(&mut input, &mut gas_used, |p| p.keepalive_days = val, ctx)
         }
         Calls::setWasmBlockCacheSize(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
-            write_stylus_param(
-                &mut input,
-                &mut gas_used,
-                |p| p.block_cache_size = val as u16,
-                ctx,
-            )
+            let val = read_u16_param(gas_used, data, 0)?;
+            write_stylus_param(&mut input, &mut gas_used, |p| p.block_cache_size = val, ctx)
         }
         Calls::setWasmMaxSize(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 40, 0) {
@@ -368,11 +364,11 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 60, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
+            let val = read_u8_param(gas_used, data, 0)?;
             write_stylus_param(
                 &mut input,
                 &mut gas_used,
-                |p| p.max_fragment_count = val as u8,
+                |p| p.max_fragment_count = val,
                 ctx,
             )
         }
@@ -515,6 +511,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         }
         Err(_) => Ok(PrecompileOutput::new_reverted(0, Default::default())),
     };
+    ctx.restore_precompile_multi_gas(mg_snapshot);
     crate::gas_check(ctx, gas_limit, gas_used, result)
 }
 
@@ -1541,13 +1538,49 @@ fn handle_set_activation_gas(
     ))
 }
 
-fn read_u32_param(gas_used: u64, data: &[u8]) -> Result<u32, ArbPrecompileError> {
-    if data.len() < 36 {
-        return Err(ArbPrecompileError::empty_revert(gas_used));
-    }
-    let val = U256::from_be_slice(&data[4..36]);
-    val.try_into()
+// The integer readers reject any word that exceeds the declared Solidity
+// width, matching the ABI decoder bound: a too-large word reverts rather than
+// silently truncating.
+
+fn arg_word(data: &[u8], index: usize, gas_used: u64) -> Result<U256, ArbPrecompileError> {
+    let start = 4 + index * 32;
+    data.get(start..start + 32)
+        .map(U256::from_be_slice)
+        .ok_or_else(|| ArbPrecompileError::empty_revert(gas_used))
+}
+
+fn read_u8_param(gas_used: u64, data: &[u8], index: usize) -> Result<u8, ArbPrecompileError> {
+    arg_word(data, index, gas_used)?
+        .try_into()
         .map_err(|_| ArbPrecompileError::empty_revert(gas_used))
+}
+
+fn read_u16_param(gas_used: u64, data: &[u8], index: usize) -> Result<u16, ArbPrecompileError> {
+    arg_word(data, index, gas_used)?
+        .try_into()
+        .map_err(|_| ArbPrecompileError::empty_revert(gas_used))
+}
+
+fn read_u32_param(gas_used: u64, data: &[u8]) -> Result<u32, ArbPrecompileError> {
+    arg_word(data, 0, gas_used)?
+        .try_into()
+        .map_err(|_| ArbPrecompileError::empty_revert(gas_used))
+}
+
+fn read_u64_param(gas_used: u64, data: &[u8]) -> Result<u64, ArbPrecompileError> {
+    arg_word(data, 0, gas_used)?
+        .try_into()
+        .map_err(|_| ArbPrecompileError::empty_revert(gas_used))
+}
+
+/// Ceiling division; the addend saturates so a near-max input cannot wrap.
+fn div_ceil(value: u64, divisor: u64) -> u64 {
+    value.saturating_add(divisor - 1) / divisor
+}
+
+/// Narrows to u8, clamping to u8::MAX instead of truncating.
+fn saturating_u8(value: u64) -> u8 {
+    value.min(u8::MAX as u64) as u8
 }
 
 // Cache manager helpers
@@ -1844,8 +1877,8 @@ fn handle_set_gas_pricing_constraints(
             .map_err(ArbPrecompileError::fatal)?;
     }
 
-    let extra = SLOAD_GAS + (count * 4 + 2) * SSTORE_GAS + count * SLOAD_GAS + COPY_GAS;
-    crate::charge_precompile_gas(gas_used, extra);
+    // The constraint storage is written through the system burner, so it costs
+    // no EVM gas to the transaction, matching `setMultiGasPricingConstraints`.
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
@@ -1956,8 +1989,8 @@ fn handle_set_multi_gas_pricing_constraints(
         validate_multi_gas_exponents(internals, arb_state, (i as u64) + 1, *gas_used)?;
     }
 
-    let extra = (count * 16 + 2) * SSTORE_GAS + (count * 12 + 2) * SLOAD_GAS + COPY_GAS;
-    crate::charge_precompile_gas(gas_used, extra);
+    // The constraint storage is written through the system burner, so it costs
+    // no EVM gas to the transaction.
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
         Vec::new().into(),

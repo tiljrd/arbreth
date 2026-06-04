@@ -280,7 +280,7 @@ fn arb_selfdestruct<WIRE: InterpreterTypes, H: Host + ?Sized>(
     let acting_addr = ctx.interpreter.input.target_address();
     match ctx.host.load_account_code(acting_addr) {
         Some(code_load) => {
-            if arb_stylus::is_stylus_program(&code_load.data) {
+            if arb_stylus::is_stylus_runnable(&code_load.data) {
                 ctx.interpreter.halt(InstructionResult::Revert);
                 return;
             }
@@ -351,7 +351,8 @@ pub fn reset_stylus_pages(ctx: &arb_context::ArbPrecompileCtx) {
 
 use arb_storage::{
     layout::{
-        derive_subspace_key, map_slot_b256, PROGRAMS_DATA_KEY, PROGRAMS_PARAMS_KEY,
+        derive_subspace_key, map_slot_b256,
+        programs::{MODULE_HASHES_KEY, PARAMS_KEY, PROGRAM_DATA_KEY},
         PROGRAMS_SUBSPACE, ROOT_STORAGE_KEY,
     },
     DatabaseError, DatabaseErrorInfo, Detached, Storage, StorageBackend, StorageError,
@@ -456,7 +457,7 @@ impl<DB: Database> StorageBackend for JournalBackend<'_, DB> {
 /// required.
 fn programs_params_storage() -> Storage<'static, Detached> {
     let programs_key = derive_subspace_key(ROOT_STORAGE_KEY, PROGRAMS_SUBSPACE);
-    let params_key = derive_subspace_key(programs_key.as_slice(), PROGRAMS_PARAMS_KEY);
+    let params_key = derive_subspace_key(programs_key.as_slice(), PARAMS_KEY);
     Storage::detached(ARBOS_STATE_ADDRESS, params_key)
 }
 
@@ -466,7 +467,7 @@ fn read_program_word<DB: Database>(
     code_hash: B256,
 ) -> Option<B256> {
     let programs_key = derive_subspace_key(ROOT_STORAGE_KEY, PROGRAMS_SUBSPACE);
-    let data_key = derive_subspace_key(programs_key.as_slice(), PROGRAMS_DATA_KEY);
+    let data_key = derive_subspace_key(programs_key.as_slice(), PROGRAM_DATA_KEY);
     let slot = map_slot_b256(data_key.as_slice(), &code_hash);
     sload_arbos(journal, slot).map(|v| B256::from(v.to_be_bytes::<32>()))
 }
@@ -478,7 +479,7 @@ fn read_module_hash<DB: Database>(
     code_hash: B256,
 ) -> Option<B256> {
     let programs_key = derive_subspace_key(ROOT_STORAGE_KEY, PROGRAMS_SUBSPACE);
-    let module_hashes_key = derive_subspace_key(programs_key.as_slice(), &[2]);
+    let module_hashes_key = derive_subspace_key(programs_key.as_slice(), MODULE_HASHES_KEY);
     let slot = map_slot_b256(module_hashes_key.as_slice(), &code_hash);
     sload_arbos(journal, slot).map(|v| B256::from(v.to_be_bytes::<32>()))
 }
@@ -781,7 +782,7 @@ where
     };
 
     if pre_ctx.block.arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS
-        && arb_stylus::is_stylus_program(&bytecode)
+        && arb_stylus::is_stylus_runnable(&bytecode)
     {
         // SAFETY: see the `Arc::increment_strong_count` site above —
         // `precompile_ctx` was produced by `Arc::as_ptr` and is valid
@@ -1003,10 +1004,8 @@ where
                 pages,
             };
         }
-        let is_stylus = deployed_code.len() >= 3
-            && deployed_code[0] == 0xEF
-            && deployed_code[1] == 0xF0
-            && deployed_code[2] == 0x00;
+        let is_stylus =
+            arb_stylus::is_stylus_component(&deployed_code, pre_ctx.block.arbos_version);
         if !deployed_code.is_empty() && deployed_code[0] == 0xEF && !is_stylus {
             context.journaled_state.inner.checkpoint_revert(checkpoint);
             return SubCreateResult {
@@ -1144,14 +1143,27 @@ where
         revm::interpreter::Instruction::new(arb_selfbalance, 5),
     );
 
+    // Attribute this EVM sub-frame's opcodes by multi-gas dimension so a Stylus
+    // contract calling Solidity prices the callee's storage/log gas like the EVM
+    // would. Sub-calls dispatched below surface as `NewFrame`; their forwarded
+    // gas is stripped via the inspector's call/create hooks and attributed by
+    // the callee frame.
+    let mut multi_gas_inspector = crate::multi_gas::MultiGasInspector::default();
     loop {
-        let action = interpreter.run_plain(&instructions.instruction_table, context);
+        let action = revm::inspector::inspect_instructions(
+            context,
+            &mut interpreter,
+            &mut multi_gas_inspector,
+            &instructions.instruction_table,
+        );
 
         match action {
             InterpreterAction::Return(result) => {
+                pre_ctx.add_stylus_multi_gas(multi_gas_inspector.take_multi_gas());
                 return result;
             }
-            InterpreterAction::NewFrame(FrameInput::Call(sub_call)) => {
+            InterpreterAction::NewFrame(FrameInput::Call(mut sub_call)) => {
+                revm::Inspector::call(&mut multi_gas_inspector, context, &mut sub_call);
                 // Dispatch nested call through our trampoline.
                 // For DELEGATECALL, target_address is the storage context (preserved
                 // from parent), and caller is the msg.sender (preserved). For
@@ -1241,7 +1253,8 @@ where
                     interpreter.gas.record_refund(sub_result.refund);
                 }
             }
-            InterpreterAction::NewFrame(FrameInput::Create(sub_create)) => {
+            InterpreterAction::NewFrame(FrameInput::Create(mut sub_create)) => {
+                revm::Inspector::create(&mut multi_gas_inspector, context, &mut sub_create);
                 // Dispatch create through our trampoline
                 let salt = match sub_create.scheme() {
                     revm::interpreter::CreateScheme::Create2 { salt } => {
@@ -1289,6 +1302,7 @@ where
                 }
             }
             InterpreterAction::NewFrame(FrameInput::Empty) => {
+                pre_ctx.add_stylus_multi_gas(multi_gas_inspector.take_multi_gas());
                 return InterpreterResult::new(
                     InstructionResult::Revert,
                     Bytes::new(),
@@ -1454,8 +1468,46 @@ where
             }
         }
     } else {
-        let decompressed = match arb_stylus::decompress_wasm(bytecode) {
+        // A root program's WASM is reconstructed from its fragments; execution
+        // does not charge for the reads (the activation path does) and reads
+        // fragment code straight from the database so it is not warmed.
+        let decompressed_result = if arb_stylus::is_stylus_root(bytecode) {
+            arb_stylus::get_wasm_from_root(
+                bytecode,
+                params.max_wasm_size,
+                params.max_fragment_count,
+                false,
+                |addr| {
+                    let db = &mut context.journaled_state.database;
+                    let info = db
+                        .basic(addr)
+                        .map_err(|e| arb_stylus::StylusError::Backend(format!("{e:?}")))?
+                        .unwrap_or_default();
+                    let code = match info.code {
+                        Some(c) => c,
+                        None => db
+                            .code_by_hash(info.code_hash)
+                            .map_err(|e| arb_stylus::StylusError::Backend(format!("{e:?}")))?,
+                    };
+                    Ok(code.original_bytes().to_vec())
+                },
+            )
+        } else {
+            arb_stylus::decompress_wasm(bytecode)
+        };
+        let decompressed = match decompressed_result {
             Ok(w) => w,
+            // A backing-store failure is an infrastructure error: abort rather
+            // than revert, so a transient read error can't pass as a bad program.
+            Err(arb_stylus::StylusError::Backend(e)) => {
+                tracing::error!(target: "stylus", codehash = %code_hash, err = %e, "fragment read failed");
+                write_pages(parent_open, start_ever);
+                return InterpreterResult::new(
+                    InstructionResult::FatalExternalError,
+                    Bytes::new(),
+                    zero_gas(),
+                );
+            }
             Err(e) => {
                 tracing::warn!(target: "stylus", codehash = %code_hash, err = %e, "WASM decompression failed");
                 write_pages(parent_open, start_ever);
@@ -1535,6 +1587,21 @@ where
         gas_result.record_refund(sstore_refund);
     }
 
+    let consumed_gas_left = match outcome {
+        UserOutcome::OutOfInk | UserOutcome::OutOfStack => 0,
+        _ => gas_left,
+    };
+    // Gas forwarded to sub-calls is attributed by the callee frame, so exclude
+    // it from this frame's WasmComputation residual.
+    let sub_call_gas = instance.env().evm_api.sub_call_gas();
+    let mut program_multi_gas = instance.env().evm_api.multi_gas();
+    arbos::programs::attribute_wasm_computation(
+        &mut program_multi_gas,
+        total_gas.saturating_sub(sub_call_gas),
+        consumed_gas_left,
+    );
+    ctx.add_stylus_multi_gas(program_multi_gas);
+
     match outcome {
         UserOutcome::Success => {
             InterpreterResult::new(InstructionResult::Return, output, gas_result)
@@ -1607,7 +1674,7 @@ fn is_stylus_call(frame_init: &FrameInit, arbos_version: u64) -> Option<Bytes> {
     if let FrameInput::Call(ref inputs) = frame_init.frame_input {
         if let Some((_, ref code)) = inputs.known_bytecode {
             let raw = code.original_bytes();
-            if arb_stylus::is_stylus_program(&raw) {
+            if arb_stylus::is_stylus_runnable(&raw) {
                 return Some(raw);
             }
         }
@@ -1728,7 +1795,7 @@ where
                 });
 
             if let Some(bytecode) = bytecode {
-                if arb_stylus::is_stylus_program(&bytecode) {
+                if arb_stylus::is_stylus_runnable(&bytecode) {
                     return Ok(Some(execute_stylus_program(
                         context, inputs, &bytecode, &self.ctx,
                     )));
@@ -1992,10 +2059,8 @@ where
                         .map(|c| c.data.to_vec())
                         .unwrap_or_default();
                     let starts_with_ef = code_bytes.first() == Some(&0xEF);
-                    let is_stylus = code_bytes.len() >= 3
-                        && code_bytes[0] == 0xEF
-                        && code_bytes[1] == 0xF0
-                        && code_bytes[2] == 0x00;
+                    let is_stylus =
+                        arb_stylus::is_stylus_component(&code_bytes, pre_ctx.block.arbos_version);
                     if starts_with_ef && !is_stylus {
                         if let Some(create_ctx) = create_ctx {
                             self.inner

@@ -481,10 +481,10 @@ where
 
         // Read the L2 baseFee from the parent's committed state.
         let l2_base_fee = {
-            let read_slot = |addr: Address, slot: B256| -> Option<U256> {
-                state_provider.storage(addr, slot).ok().flatten()
-            };
-            arbos::header::read_l2_base_fee(&read_slot).or(parent_header.base_fee_per_gas())
+            let read_slot = |addr: Address, slot: B256| state_provider.storage(addr, slot);
+            arbos::header::read_l2_base_fee(&read_slot)
+                .map_err(|e| BlockProducerError::Storage(e.to_string()))?
+                .or(parent_header.base_fee_per_gas())
         };
 
         // Build a provisional header for the EVM config.
@@ -638,16 +638,25 @@ where
             extra_data: exec_extra.into(),
         };
 
-        // Create the block executor via the factory.
+        // Create the block executor via the factory. A multi-gas inspector is
+        // installed so the v60 multi-dimensional pricing backlog is driven by
+        // per-opcode resource attribution; it publishes each tx's multi-gas to
+        // the shared sink the executor reads.
+        let multi_gas_sink = arb_evm::multi_gas::MultiGasSink::default();
         let evm = self
             .evm_config
             .block_executor_factory()
             .evm_factory()
-            .create_evm(&mut db, evm_env.clone());
+            .create_evm_with_inspector(
+                &mut db,
+                evm_env.clone(),
+                arb_evm::multi_gas::MultiGasInspector::with_sink(multi_gas_sink.clone()),
+            );
         let mut executor = self
             .evm_config
             .block_executor_factory()
             .create_arb_executor(evm, exec_ctx, chain_id);
+        executor.set_multi_gas_sink(multi_gas_sink);
         executor.arb_ctx.l2_block_number = l2_block_number;
         executor.arb_ctx.l1_block_number = block_l1_block_number;
 
@@ -908,7 +917,7 @@ where
         db.merge_transitions(BundleRetention::Reverts);
         let mut bundle = db.take_bundle();
 
-        augment_bundle_from_cache(&mut bundle, &db.cache, &*state_provider);
+        augment_bundle_from_cache(&mut bundle, &db.cache, &*state_provider)?;
 
         // Mark per-tx finalise deletions, skipping zombie accounts.
         let keccak_empty_hash = alloy_primitives::B256::from(alloy_primitives::keccak256([]));
@@ -1020,7 +1029,8 @@ where
         };
 
         // Derive header info (send_root, send_count, etc.) from post-execution state.
-        let arb_info = derive_header_info_from_state(state_provider.as_ref(), &bundle);
+        let arb_info =
+            derive_header_info_from_state(state_provider.as_ref(), &bundle, input.sender)?;
 
         let final_mix_hash = arb_info
             .as_ref()
@@ -1514,18 +1524,20 @@ fn filter_unchanged_storage(bundle: &mut BundleState) {
 fn derive_header_info_from_state(
     state_provider: &dyn StateProvider,
     bundle_state: &BundleState,
-) -> Option<ArbHeaderInfo> {
-    let read_slot = |addr: Address, slot: B256| -> Option<U256> {
+    coinbase: Address,
+) -> Result<Option<ArbHeaderInfo>, BlockProducerError> {
+    let read_slot = |addr: Address, slot: B256| {
         if let Some(account) = bundle_state.state.get(&addr) {
             let slot_u256 = U256::from_be_bytes(slot.0);
             if let Some(storage_slot) = account.storage.get(&slot_u256) {
-                return Some(storage_slot.present_value);
+                return Ok(Some(storage_slot.present_value));
             }
         }
-        state_provider.storage(addr, slot).ok().flatten()
+        state_provider.storage(addr, slot)
     };
 
-    derive_arb_header_info(&read_slot)
+    derive_arb_header_info(&read_slot, coinbase)
+        .map_err(|e| BlockProducerError::Storage(e.to_string()))
 }
 
 /// Augment the bundle with direct cache modifications not captured by EVM transitions.
@@ -1533,7 +1545,7 @@ fn augment_bundle_from_cache(
     bundle: &mut BundleState,
     cache: &revm_database::CacheState,
     state_provider: &dyn StateProvider,
-) {
+) -> Result<(), BlockProducerError> {
     use revm_database::states::plain_account::StorageSlot;
 
     for (addr, cache_acct) in &cache.accounts {
@@ -1556,8 +1568,7 @@ fn augment_bundle_from_cache(
                     // Slot written via direct cache modification.
                     let original_value = state_provider
                         .storage(*addr, B256::from(*key))
-                        .ok()
-                        .flatten()
+                        .map_err(|e| BlockProducerError::Storage(e.to_string()))?
                         .unwrap_or(U256::ZERO);
                     if *value != original_value {
                         bundle_acct.storage.insert(
@@ -1572,7 +1583,9 @@ fn augment_bundle_from_cache(
             }
         } else {
             // Account not in bundle — check if modified from original.
-            let original = state_provider.basic_account(addr).ok().flatten();
+            let original = state_provider
+                .basic_account(addr)
+                .map_err(|e| BlockProducerError::Storage(e.to_string()))?;
 
             let info_changed = match (&original, &current_info) {
                 (None, None) => false,
@@ -1587,28 +1600,23 @@ fn augment_bundle_from_cache(
                 }
             };
 
-            let storage_changes: alloy_primitives::map::HashMap<U256, StorageSlot> =
-                current_storage
-                    .iter()
-                    .filter_map(|(key, value)| {
-                        let original_value = state_provider
-                            .storage(*addr, B256::from(*key))
-                            .ok()
-                            .flatten()
-                            .unwrap_or(U256::ZERO);
-                        if original_value != *value {
-                            Some((
-                                *key,
-                                StorageSlot {
-                                    previous_or_original_value: original_value,
-                                    present_value: *value,
-                                },
-                            ))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+            let mut storage_changes: alloy_primitives::map::HashMap<U256, StorageSlot> =
+                alloy_primitives::map::HashMap::default();
+            for (key, value) in &current_storage {
+                let original_value = state_provider
+                    .storage(*addr, B256::from(*key))
+                    .map_err(|e| BlockProducerError::Storage(e.to_string()))?
+                    .unwrap_or(U256::ZERO);
+                if original_value != *value {
+                    storage_changes.insert(
+                        *key,
+                        StorageSlot {
+                            previous_or_original_value: original_value,
+                            present_value: *value,
+                        },
+                    );
+                }
+            }
 
             if info_changed || !storage_changes.is_empty() {
                 let original_info = original.as_ref().map(|a| revm::state::AccountInfo {
@@ -1637,6 +1645,7 @@ fn augment_bundle_from_cache(
             }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

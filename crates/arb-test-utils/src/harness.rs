@@ -22,6 +22,7 @@ pub struct ArbosHarness {
     genesis_block_num: u64,
     serialized_chain_config: Vec<u8>,
     l1_initial_base_fee: U256,
+    network_fee_account: Option<Address>,
     initialized: bool,
 }
 
@@ -49,6 +50,7 @@ impl ArbosHarness {
             genesis_block_num: 0,
             serialized_chain_config: Vec::new(),
             l1_initial_base_fee: U256::from(100_000_000u64),
+            network_fee_account: None,
             initialized: false,
         }
     }
@@ -96,6 +98,15 @@ impl ArbosHarness {
         self
     }
 
+    /// Override the network fee account. `bootstrap` defaults it to the chain
+    /// owner for ArbOS v >= 2; this applies the equivalent of a later
+    /// `ArbOwner.setNetworkFeeAccount` so tests can pin a distinct sink.
+    pub fn with_network_fee_account(mut self, a: Address) -> Self {
+        assert!(!self.initialized, "set network fee account before initialize()");
+        self.network_fee_account = Some(a);
+        self
+    }
+
     pub fn initialize(mut self) -> Self {
         assert!(!self.initialized, "initialize() called twice");
 
@@ -112,6 +123,19 @@ impl ArbosHarness {
             SystemBurner::new(None, false),
         )
         .expect("bootstrap ArbOS state");
+
+        if let Some(account) = self.network_fee_account {
+            let state_ptr: *mut State<EmptyDb> = self.state.as_mut();
+            // SAFETY: single-threaded test setup; no other live borrow of `state`.
+            let state: &mut State<EmptyDb> = unsafe { &mut *state_ptr };
+            let mut arb_state =
+                ArbosState::open(state, SystemBurner::new(None, false)).expect("open arbos state");
+            // SAFETY: `arb_state` is the sole live handle for this write.
+            let backing = unsafe { arb_state.backing_storage.state_mut() };
+            arb_state
+                .set_network_fee_account(backing, account)
+                .expect("set network fee account");
+        }
 
         self.initialized = true;
         self

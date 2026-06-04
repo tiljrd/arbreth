@@ -809,6 +809,69 @@ mod tests {
         assert_eq!(decoded.multi_gas_used, MultiGas::from_raw(expected, 800, 5));
     }
 
+    // Canonical Arbitrum Sepolia block 1 auto-redeem retry tx (0x873c5ee3…);
+    // fields fetched from a real node. Proves our typed-tx hash preimage matches.
+    #[test]
+    fn canonical_block1_retry_tx_hash() {
+        use alloy_primitives::{address, b256, hex, keccak256, Bytes, U256};
+        use arb_alloy_consensus::tx::ArbRetryTx;
+        let tx = ArbRetryTx {
+            chain_id: U256::from(421614u64),
+            nonce: 0,
+            from: address!("b8787d8f23e176a5d32135d746b69886e03313be"),
+            gas_fee_cap: U256::from(0x5f5e100u64),
+            gas: 100_000,
+            to: Some(address!("3fab184622dc19b6109349b94811493bf2a45362")),
+            value: U256::from(0x2386f26fc10000u64),
+            data: Bytes::new(),
+            ticket_id: b256!("13cb79b086a427f3db7ebe6ec2bb90a806a3b0368ecee6020144f352e37dbdf6"),
+            refund_to: address!("11155ca9bbf7be58e27f3309e629c847996b43c8"),
+            max_refund: U256::from(0xb0e85efeab8u64),
+            submission_fee_refund: U256::from(0x1f6377d4ab8u64),
+        };
+        let mut enc = Vec::new();
+        enc.push(ArbTxType::ArbitrumRetryTx.as_u8());
+        alloy_rlp::Encodable::encode(&tx, &mut enc);
+        assert_eq!(
+            keccak256(&enc),
+            b256!("873c5ee3092c40336006808e249293bf5f4cb3235077a74cac9cafa7cf73cb8b"),
+            "retry-tx hash mismatch; our preimage = 0x{}",
+            hex::encode(&enc)
+        );
+    }
+
+    // Canonical Arbitrum Sepolia block 1 SubmitRetryable (0x13cb79b0…) = the
+    // ticketId that feeds the retry tx. Proves our type-0x69 hash preimage.
+    #[test]
+    fn canonical_block1_submit_retryable_hash() {
+        use alloy_primitives::{address, b256, hex, keccak256, Bytes, U256};
+        use arb_alloy_consensus::tx::ArbSubmitRetryableTx;
+        let tx = ArbSubmitRetryableTx {
+            chain_id: U256::from(421614u64),
+            request_id: b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            from: address!("b8787d8f23e176a5d32135d746b69886e03313be"),
+            l1_base_fee: U256::from(0x5bd57bd9u64),
+            deposit_value: U256::from(0x23e3dbb7b88ab8u64),
+            gas_fee_cap: U256::from(0x3b9aca00u64),
+            gas: 100_000,
+            retry_to: Some(address!("3fab184622dc19b6109349b94811493bf2a45362")),
+            retry_value: U256::from(0x2386f26fc10000u64),
+            beneficiary: address!("11155ca9bbf7be58e27f3309e629c847996b43c8"),
+            max_submission_fee: U256::from(0x1f6377d4ab8u64),
+            fee_refund_addr: address!("11155ca9bbf7be58e27f3309e629c847996b43c8"),
+            retry_data: Bytes::new(),
+        };
+        let mut enc = Vec::new();
+        enc.push(ArbTxType::ArbitrumSubmitRetryableTx.as_u8());
+        alloy_rlp::Encodable::encode(&tx, &mut enc);
+        assert_eq!(
+            keccak256(&enc),
+            b256!("13cb79b086a427f3db7ebe6ec2bb90a806a3b0368ecee6020144f352e37dbdf6"),
+            "submit-retryable hash mismatch; our preimage = 0x{}",
+            hex::encode(&enc)
+        );
+    }
+
     #[test]
     fn from_compact_truncates_receipt_with_more_kinds() {
         // A tail written under a larger NUM_RESOURCE_KIND: extra kinds are

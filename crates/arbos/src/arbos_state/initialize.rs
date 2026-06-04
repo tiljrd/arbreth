@@ -303,10 +303,10 @@ pub fn bootstrap<'a, D: Database, B: Burner>(
             &backing.open_sub_storage(super::CHAIN_OWNER_SUBSPACE),
         )?;
         address_set::initialize_address_set(
-            &backing.open_sub_storage(super::NATIVE_TOKEN_OWNER_SUBSPACE),
+            &backing.open_sub_storage(super::NATIVE_TOKEN_SUBSPACE),
         )?;
         address_set::initialize_address_set(
-            &backing.open_sub_storage(super::TRANSACTION_FILTERING_SUBSPACE),
+            &backing.open_sub_storage(super::TRANSACTION_FILTERER_SUBSPACE),
         )?;
     }
 
