@@ -2791,9 +2791,7 @@ where
                     if !dist.network_fee_amount.is_zero() {
                         self.touched_accounts.insert(dist.network_fee_account);
                     }
-                    if !dist.infra_fee_amount.is_zero()
-                        && dist.infra_fee_account != Address::ZERO
-                    {
+                    if !dist.infra_fee_amount.is_zero() && dist.infra_fee_account != Address::ZERO {
                         self.touched_accounts.insert(dist.infra_fee_account);
                     }
                     if !dist.poster_fee_amount.is_zero() {
@@ -2992,7 +2990,11 @@ where
                             if trace_filter {
                                 filter_reason.push((
                                     *addr,
-                                    if is_empty { "empty-delete" } else { "non-empty-kept" },
+                                    if is_empty {
+                                        "empty-delete"
+                                    } else {
+                                        "non-empty-kept"
+                                    },
                                 ));
                             }
                             return is_empty;
@@ -3182,11 +3184,17 @@ fn apply_balance_op<DB: Database>(
     amount: U256,
 ) -> Result<(), BalanceError> {
     if amount.is_zero() {
-        if tracing::enabled!(target: "arb::executor::balance", tracing::Level::TRACE) {
-            tracing::trace!(
-                target: "arb::executor::balance",
-                from = ?from, to = ?to, amount = "0", "no-op zero-amount balance op"
-            );
+        // Match Go's StateDB.AddBalance(to, 0): getOrNewStateObject materialises
+        // the object and stateObject.AddBalance(0) touches it when empty (the
+        // EIP-161 emptiness touch). The per-tx Finalise then prunes the empty
+        // touched account, and — pre-Stylus — the redeem-side
+        // CreateZombieIfDeleted can later resurrect it as a zombie leaf. Without
+        // this touch the account is never materialised, never enters
+        // `finalise_deleted`, and the zombie is silently dropped vs Nitro.
+        // The `from` side (Go's SubBalance(0)) does not touch; its pre-Stylus
+        // zombie handling is done by create_zombie_if_deleted at the call sites.
+        if let Some(to_addr) = to {
+            touch_account_if_empty(state, overlay, *to_addr);
         }
         return Ok(());
     }
@@ -3218,6 +3226,44 @@ fn apply_balance_op<DB: Database>(
         (None, None) => {}
     }
     Ok(())
+}
+
+/// Materialise `addr` as an empty account when it is currently empty or
+/// missing, mirroring Go's `stateObject.AddBalance(0)` EIP-161 touch (which
+/// runs after `getOrNewStateObject` has created the object). A non-empty target
+/// is left untouched, matching Go's `if s.empty()` guard. The caller is
+/// responsible for adding `addr` to `touched_accounts` so the per-tx Finalise
+/// considers it for pruning.
+fn touch_account_if_empty<DB: Database>(
+    state: &mut State<DB>,
+    overlay: &mut StateOverlay,
+    addr: Address,
+) {
+    overlay.record_pre_touch(state, addr);
+    let keccak_empty = alloy_primitives::B256::from(alloy_primitives::keccak256([]));
+    let materialise = match state.cache.accounts.get(&addr) {
+        Some(cached) => match &cached.account {
+            Some(acct) => {
+                acct.info.nonce == 0
+                    && acct.info.balance.is_zero()
+                    && acct.info.code_hash == keccak_empty
+            }
+            None => true,
+        },
+        None => true,
+    };
+    if !materialise {
+        return;
+    }
+    if let Some(cached) = state.cache.accounts.get_mut(&addr) {
+        if cached.account.is_none() {
+            cached.account = Some(revm_database::states::plain_account::PlainAccount {
+                info: revm_state::AccountInfo::default(),
+                storage: Default::default(),
+            });
+            cached.status = revm_database::AccountStatus::InMemoryChange;
+        }
+    }
 }
 
 /// Increment the nonce of an account.

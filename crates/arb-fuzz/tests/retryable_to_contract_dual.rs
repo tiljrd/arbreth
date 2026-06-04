@@ -328,11 +328,21 @@ fn run_single(version: u64, case: char) {
 #[test]
 #[ignore]
 fn diff_accounts_autoredeem_v6() {
+    diff_accounts_autoredeem_at(6);
+}
+
+#[test]
+#[ignore]
+fn diff_accounts_autoredeem_v60() {
+    diff_accounts_autoredeem_at(60);
+}
+
+fn diff_accounts_autoredeem_at(version: u64) {
     use arb_test_harness::messaging::apply_l1_to_l2_alias;
     use arb_test_harness::node::{BlockId, ExecutionNode};
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let owner = derive_address(deployer_key());
-    let mut rig = Rig::spawn(6, owner);
+    let mut rig = Rig::spawn(version, owner);
     let idx = Idx::new();
     let mut steps = Vec::new();
     let deployer = derive_address(deployer_key());
@@ -349,7 +359,7 @@ fn diff_accounts_autoredeem_v6() {
     let scenario = Scenario {
         name: "diag".into(),
         description: "diag".into(),
-        setup: ScenarioSetup { l2_chain_id: L2_CHAIN_ID, arbos_version: 6, genesis: None },
+        setup: ScenarioSetup { l2_chain_id: L2_CHAIN_ID, arbos_version: version, genesis: None },
         steps,
     };
     let _ = rig.dual.run(&scenario).expect("run");
@@ -403,9 +413,9 @@ fn diff_accounts_autoredeem_v6() {
         let lc = rig.dual.left.code(a, at.clone()).map(|c| c.len()).unwrap_or(0);
         let rc = rig.dual.right.code(a, at.clone()).map(|c| c.len()).unwrap_or(0);
         let tag = if lh != rh { any = true; "DIFF" } else { "ok  " };
-        eprintln!("{tag} {name} {a:?}: codeHash nitro={lh} arbreth={rh} (codelen {lc}/{rc})");
+        eprintln!("{tag} v{version} {name} {a:?}: codeHash nitro={lh} arbreth={rh} (codelen {lc}/{rc})");
     }
-    assert!(any, "expected at least one account whose existence (codeHash) diverges");
+    eprintln!("v{version}: any_existence_diff={any}");
 }
 
 #[test]
