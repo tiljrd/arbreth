@@ -280,6 +280,124 @@ fn assert_clean_at(version: u64) {
     );
 }
 
+/// Diagnostic: replay the core-tx scenario at `version` and dump each tx's gas
+/// breakdown (gasUsed, gasUsedForL1 poster gas, effectiveGasPrice, status) from
+/// both nodes via raw RPC, flagging which tx and which component diverges.
+fn dump_gas_at(version: u64) {
+    use arb_test_harness::rpc::JsonRpcClient;
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let payer = derive_address(payer_key());
+    let recipient = address!("00000000000000000000000000000000d00d0001");
+    let mut rig = Rig::spawn(version, payer);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+    let dep = idx.next();
+    steps.push(msg_step(
+        dep,
+        DepositBuilder {
+            from: FUNDER,
+            to: payer,
+            amount: U256::from(10u128).pow(U256::from(20u64)),
+            l1_block_number: 1,
+            timestamp: 1_700_000_000,
+            request_seq: dep,
+            base_fee_l1: L1_BASE_FEE,
+        }
+        .build()
+        .unwrap(),
+    ));
+    let i = idx.next();
+    steps.push(msg_step(i, payer_tx(0, Some(recipient), U256::from(1_000_000u64), Vec::new(), 1_000_000, L2TxKind::Eip1559).build().unwrap()));
+    let i = idx.next();
+    steps.push(msg_step(i, payer_tx(1, Some(recipient), U256::from(2_000_000u64), Vec::new(), 1_000_000, L2TxKind::Legacy).build().unwrap()));
+    let i = idx.next();
+    steps.push(msg_step(i, payer_tx(2, None, U256::ZERO, DEPLOY_INIT.to_vec(), 30_000_000, L2TxKind::Eip1559).build().unwrap()));
+    let deployed = {
+        use alloy_primitives::keccak256;
+        let mut rlp = Vec::with_capacity(23);
+        rlp.push(0xd6);
+        rlp.push(0x94);
+        rlp.extend_from_slice(payer.as_slice());
+        rlp.push(0x02);
+        Address::from_slice(&keccak256(&rlp)[12..])
+    };
+    let i = idx.next();
+    steps.push(msg_step(i, payer_tx(3, Some(deployed), U256::ZERO, Vec::new(), 1_000_000, L2TxKind::Eip1559).build().unwrap()));
+
+    let scenario = Scenario {
+        name: format!("gas_diag_v{version}"),
+        description: "gas diag".into(),
+        setup: ScenarioSetup { l2_chain_id: L2_CHAIN_ID, arbos_version: version, genesis: None },
+        steps,
+    };
+    let report = rig.dual.run(&scenario).expect("run");
+    eprintln!(
+        "v{version} REPORT is_clean={} block_diffs={} tx_diffs={}",
+        report.is_clean(),
+        report.block_diffs.len(),
+        report.tx_diffs.len()
+    );
+    for d in &report.tx_diffs {
+        eprintln!("  REPORT-TXDIFF tx={:?} field={} left={} right={}", d.tx_hash, d.field, d.left, d.right);
+    }
+    let lrpc = JsonRpcClient::new(rig.dual.left.rpc_url().to_string());
+    let rrpc = JsonRpcClient::new(rig.dual.right.rpc_url().to_string());
+    let latest = rig.dual.left.block(BlockId::Latest).expect("latest").number;
+    let field = |v: &serde_json::Value, k: &str| -> String {
+        v.get(k).and_then(|x| x.as_str()).map(|s| {
+            u128::from_str_radix(s.trim_start_matches("0x"), 16).map(|n| n.to_string()).unwrap_or_else(|_| s.to_string())
+        }).unwrap_or_else(|| "-".into())
+    };
+    for b in 1..=latest {
+        let blk = rig.dual.left.block(BlockId::Number(b)).expect("blk");
+        for h in &blk.tx_hashes {
+            let hs = format!("{h:?}");
+            let lr = lrpc.call("eth_getTransactionReceipt", serde_json::json!([hs])).unwrap_or(serde_json::Value::Null);
+            let rr = rrpc.call("eth_getTransactionReceipt", serde_json::json!([hs])).unwrap_or(serde_json::Value::Null);
+            let lg = field(&lr, "gasUsed");
+            let rg = field(&rr, "gasUsed");
+            let tag = if lg != rg { "DIFF" } else { "ok  " };
+            eprintln!(
+                "{tag} v{version} blk{b} to={} created={} status nitro={}/arbreth={}\n      gasUsed   nitro={} arbreth={}\n      gasL1     nitro={} arbreth={}\n      effGasPx  nitro={} arbreth={}",
+                field(&lr, "to"), field(&lr, "contractAddress"),
+                field(&lr, "status"), field(&rr, "status"),
+                lg, rg,
+                field(&lr, "gasUsedForL1"), field(&rr, "gasUsedForL1"),
+                field(&lr, "effectiveGasPrice"), field(&rr, "effectiveGasPrice"),
+            );
+        }
+    }
+    // Balance probe at the latest block to find the diverging account.
+    let at = BlockId::Number(latest);
+    let cands: [(&str, Address); 6] = [
+        ("payer/owner/networkfee", payer),
+        ("recipient", recipient),
+        ("coinbase/sequencer", SEQUENCER_ALIAS),
+        ("l1_pricer_pool", address!("a4b00000000000000000000000000000000000f6")),
+        ("deployed", deployed),
+        ("zero", Address::ZERO),
+    ];
+    for (name, a) in cands {
+        let lb = rig.dual.left.balance(a, at.clone()).unwrap_or(U256::ZERO);
+        let rb = rig.dual.right.balance(a, at.clone()).unwrap_or(U256::ZERO);
+        let tag = if lb != rb { "BAL-DIFF" } else { "bal-ok  " };
+        eprintln!("{tag} v{version} {name} {a:?}: nitro={lb} arbreth={rb} delta={}",
+            if lb >= rb { format!("-{}", lb - rb) } else { format!("+{}", rb - lb) });
+    }
+}
+
+#[test]
+#[ignore]
+fn dump_gas_v9() {
+    dump_gas_at(9);
+}
+
+#[test]
+#[ignore]
+fn dump_gas_v8() {
+    dump_gas_at(8);
+}
+
 #[test]
 #[ignore]
 fn core_tx_surface_matches_nitro_v6() {

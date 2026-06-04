@@ -1179,11 +1179,20 @@ where
             let base_fee = self.arb_ctx.basefee;
             let base_fee_u128: u128 = base_fee.try_into().unwrap_or(u128::MAX);
             let max_fee: u128 = revm::context_interface::Transaction::gas_price(&tx_env);
-            let max_priority: u128 =
-                revm::context_interface::Transaction::max_priority_fee_per_gas(&tx_env)
-                    .unwrap_or(0);
+            // Match Go's effective gas price (evm.GasPrice). Legacy / EIP-2930
+            // txs carry no priority-fee field (revm returns None); the sender
+            // pays the full gas_price, so the effective price is gas_price
+            // itself. EIP-1559 / 7702 pay base_fee + min(priority, max_fee -
+            // base_fee). Collapsing the missing priority to 0 would mis-price a
+            // legacy tx at base_fee, inflating its posterGas (posterCost /
+            // price) whenever CollectTips is on (ArbOS >= 9).
             let effective: u128 =
-                std::cmp::min(max_fee, base_fee_u128.saturating_add(max_priority));
+                match revm::context_interface::Transaction::max_priority_fee_per_gas(&tx_env) {
+                    Some(max_priority) => {
+                        std::cmp::min(max_fee, base_fee_u128.saturating_add(max_priority))
+                    }
+                    None => max_fee,
+                };
             let drop = self
                 .arb_hooks
                 .as_ref()
@@ -1943,24 +1952,34 @@ where
         // the tip-drop cap below rewrites `tx_env.gas_price` to base_fee.
         {
             let base_fee_u128: u128 = self.arb_ctx.basefee.try_into().unwrap_or(u128::MAX);
-            let max_priority: u128 =
-                revm::context_interface::Transaction::max_priority_fee_per_gas(&tx_env)
-                    .unwrap_or(0);
-            let effective: u128 = upfront_gas_price.min(base_fee_u128.saturating_add(max_priority));
+            // Legacy / EIP-2930 pay the full gas_price (no priority-fee field;
+            // revm returns None); EIP-1559 / 7702 pay base_fee + priority.
+            let effective: u128 =
+                match revm::context_interface::Transaction::max_priority_fee_per_gas(&tx_env) {
+                    Some(max_priority) => {
+                        upfront_gas_price.min(base_fee_u128.saturating_add(max_priority))
+                    }
+                    None => upfront_gas_price,
+                };
             self.precompile_ctx.set_effective_gas_price(effective);
         }
 
-        // Effective tip per gas (per EIP-1559): min(max_priority_fee, max_fee - base_fee).
-        // This is what revm mints to coinbase. Used by commit_transaction to
-        // redirect coinbase tip to network when CollectTips() is true.
+        // Effective tip per gas — what revm mints to the coinbase. Used by
+        // commit_transaction to redirect the coinbase tip to the network fee
+        // account when CollectTips() is true. Legacy / EIP-2930 fold their
+        // entire gas_price-above-base-fee into the tip (revm reports no
+        // priority field); EIP-1559 / 7702 use the explicit priority capped at
+        // max_fee - base_fee. Collapsing the missing priority to 0 would leave a
+        // legacy tx's tip stranded on the coinbase instead of the network fee
+        // account whenever CollectTips is on (ArbOS >= 9).
         let effective_tip_per_gas: u128 = {
             let bf: u128 = self.arb_ctx.basefee.try_into().unwrap_or(u128::MAX);
             let max_fee: u128 = upfront_gas_price; // gas_price() returns max_fee_per_gas for EIP-1559
-            let max_priority: u128 =
-                revm::context_interface::Transaction::max_priority_fee_per_gas(&tx_env)
-                    .unwrap_or(0);
             let max_minus_bf = max_fee.saturating_sub(bf);
-            max_priority.min(max_minus_bf)
+            match revm::context_interface::Transaction::max_priority_fee_per_gas(&tx_env) {
+                Some(max_priority) => max_priority.min(max_minus_bf),
+                None => max_minus_bf,
+            }
         };
 
         // Drop the priority fee tip: cap gas price to the base fee.
