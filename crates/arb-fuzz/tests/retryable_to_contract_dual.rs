@@ -297,6 +297,13 @@ fn run_single(version: u64, case: char) {
         'a' => submit_retryable(l1s, store, 200_000, U256::ZERO, 2, t + 4, req_id(0xa1)),
         'b' => submit_retryable(l1s, revert_c, 200_000, U256::ZERO, 2, t + 4, req_id(0xb2)),
         'c' => submit_retryable(l1s, store, 0, U256::from(12_345u64), 2, t + 4, req_id(0xc3)),
+        // (d) success redeem WITH callvalue: escrow is still drained to empty on
+        //     success, so it should diverge like (a) if the empty escrow is the cause.
+        'd' => submit_retryable(l1s, store, 200_000, U256::from(12_345u64), 2, t + 4, req_id(0xd4)),
+        // (e) revert redeem WITH callvalue: the failed redeem RETAINS the callvalue
+        //     in escrow, so the escrow stays non-empty. If (e) is clean while
+        //     (b) (callvalue=0) diverges, the empty escrow's tombstone is the cause.
+        'e' => submit_retryable(l1s, revert_c, 200_000, U256::from(12_345u64), 2, t + 4, req_id(0xe5)),
         _ => unreachable!(),
     };
     steps.push(msg(idx.next(), sub.build().unwrap()));
@@ -403,6 +410,18 @@ fn isolate_b_autoredeem_revert_v6() {
 #[ignore]
 fn isolate_c_escrow_only_v6() {
     run_single(6, 'c');
+}
+
+#[test]
+#[ignore]
+fn isolate_d_autoredeem_store_callvalue_v6() {
+    run_single(6, 'd');
+}
+
+#[test]
+#[ignore]
+fn isolate_e_autoredeem_revert_callvalue_v6() {
+    run_single(6, 'e');
 }
 
 #[test]
