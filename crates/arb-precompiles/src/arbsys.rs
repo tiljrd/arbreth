@@ -154,7 +154,7 @@ fn handle_arb_block_hash(
 
     if requested >= current || requested + 256 < current {
         let arbos_version = ctx.block.arbos_version;
-        if arbos_version >= 11 {
+        if arbos_version >= arb_ver::ARBOS_VERSION_11 {
             let revert_data = IArbSys::InvalidBlockNumber {
                 requested: requested_u256,
                 current: U256::from(current),
@@ -527,7 +527,7 @@ fn do_send_tx_to_l1(
         LOG_GAS + LOG_TOPIC_GAS * 4 + LOG_DATA_GAS * l2l1_data_len,
     );
 
-    let return_val = if arbos_version >= 4 {
+    let return_val = if arbos_version >= arb_ver::ARBOS_VERSION_L2_TO_L1_RETURN_L2BLOCK {
         U256::from(leaf_num)
     } else {
         U256::from_be_bytes(send_hash.0)

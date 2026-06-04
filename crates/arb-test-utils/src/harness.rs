@@ -128,7 +128,7 @@ impl ArbosHarness {
             let state_ptr: *mut State<EmptyDb> = self.state.as_mut();
             // SAFETY: single-threaded test setup; no other live borrow of `state`.
             let state: &mut State<EmptyDb> = unsafe { &mut *state_ptr };
-            let mut arb_state =
+            let arb_state =
                 ArbosState::open(state, SystemBurner::new(None, false)).expect("open arbos state");
             // SAFETY: `arb_state` is the sole live handle for this write.
             let backing = unsafe { arb_state.backing_storage.state_mut() };

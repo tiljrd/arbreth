@@ -1,6 +1,7 @@
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolInterface;
+use arb_chainspec::arbos_version as arb_ver;
 use arb_context::ArbPrecompileCtx;
 use arb_storage::ARBOS_STATE_ADDRESS;
 
@@ -577,7 +578,7 @@ fn handle_l1_pricing_surplus(
         .map_err(ArbPrecompileError::fatal)?;
     let need_funds = total_funds_due.saturating_add(funds_due_for_rewards);
 
-    let have_funds = if arbos_version >= 10 {
+    let have_funds = if arbos_version >= arb_ver::ARBOS_VERSION_L1_PRICING_FROM_POOL_SLOT {
         arb_state
             .l1_pricing_state
             .l1_fees_available(internals)
@@ -597,7 +598,11 @@ fn handle_l1_pricing_surplus(
     };
 
     // body reads (init covers the OpenArbosState).
-    let body_sloads = if arbos_version >= 10 { 3 } else { 2 };
+    let body_sloads = if arbos_version >= arb_ver::ARBOS_VERSION_L1_PRICING_FROM_POOL_SLOT {
+        3
+    } else {
+        2
+    };
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
     Ok(PrecompileOutput::new(
