@@ -376,22 +376,36 @@ fn diff_accounts_autoredeem_v6() {
         ("zero", Address::ZERO),
         ("arbos_state", address!("a4b05fffffffffffffffffffffffffffffffffff")),
     ];
+    // eth_getProof existence probe: codeHash == keccak("") (0xc5d2..) => account
+    // EXISTS (even if empty); == 0x000..0 => ABSENT. This is the only way to see
+    // a zombie/tombstone (balance/nonce/codelen are identical either way).
+    use arb_test_harness::rpc::JsonRpcClient;
+    let left_rpc = JsonRpcClient::new(rig.dual.left.rpc_url().to_string());
+    let right_rpc = JsonRpcClient::new(rig.dual.right.rpc_url().to_string());
+    let block_hex = format!("0x{latest:x}");
+    let exists = |rpc: &JsonRpcClient, a: Address| -> String {
+        match rpc.call(
+            "eth_getProof",
+            serde_json::json!([format!("{a:?}"), [], block_hex]),
+        ) {
+            Ok(v) => v
+                .get("codeHash")
+                .and_then(|c| c.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            Err(e) => format!("err:{e}"),
+        }
+    };
     let mut any = false;
     for (name, a) in candidates {
-        let lb = rig.dual.left.balance(a, at.clone()).unwrap_or(U256::ZERO);
-        let rb = rig.dual.right.balance(a, at.clone()).unwrap_or(U256::ZERO);
-        let ln = rig.dual.left.nonce(a, at.clone()).unwrap_or(0);
-        let rn = rig.dual.right.nonce(a, at.clone()).unwrap_or(0);
+        let lh = exists(&left_rpc, a);
+        let rh = exists(&right_rpc, a);
         let lc = rig.dual.left.code(a, at.clone()).map(|c| c.len()).unwrap_or(0);
         let rc = rig.dual.right.code(a, at.clone()).map(|c| c.len()).unwrap_or(0);
-        if lb != rb || ln != rn || lc != rc {
-            any = true;
-            eprintln!("DIFF {name} {a:?}: bal nitro={lb} arbreth={rb} | nonce {ln}/{rn} | codelen {lc}/{rc}");
-        } else {
-            eprintln!("ok   {name} {a:?}: bal={lb} nonce={ln} codelen={lc}");
-        }
+        let tag = if lh != rh { any = true; "DIFF" } else { "ok  " };
+        eprintln!("{tag} {name} {a:?}: codeHash nitro={lh} arbreth={rh} (codelen {lc}/{rc})");
     }
-    assert!(any, "expected at least one diverging account (diagnostic)");
+    assert!(any, "expected at least one account whose existence (codeHash) diverges");
 }
 
 #[test]
