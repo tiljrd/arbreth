@@ -28,7 +28,7 @@ exclude = ["brotli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.4"
 edition = "2021"
 rust-version = "1.93"
 license = "BUSL-1.1"
@@ -119,6 +119,7 @@ reth-config = { git = "https://github.com/paradigmxyz/reth.git", rev = "20cfb2d5
 reth-trie-db = { git = "https://github.com/paradigmxyz/reth.git", rev = "20cfb2d517" }
 reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth.git", rev = "20cfb2d517" }
 reth-trie-sparse = { git = "https://github.com/paradigmxyz/reth.git", rev = "20cfb2d517" }
+reth-metrics = { git = "https://github.com/paradigmxyz/reth.git", rev = "20cfb2d517" }
 
 # Alloy
 alloy-primitives = { version = "1.5", default-features = false, features = ["map-foldhash"] }

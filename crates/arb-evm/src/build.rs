@@ -529,11 +529,19 @@ where
     >,
     R::Transaction: TransactionEnvelope,
 {
-    /// Re-read the network and infrastructure fee collectors from committed
-    /// ArbOS state into the cached context and hooks.
+    /// Re-read the per-tx ArbOS state parameters from committed state into the
+    /// cached context and hooks: the fee collectors, minimum base fee, brotli
+    /// compression level, and calldata-pricing feature.
     #[cold]
     #[inline(never)]
-    fn refresh_fee_collectors(&mut self) {
+    fn refresh_state_params(&mut self) {
+        let arbos_version = self.arb_ctx.arbos_version;
+        let mut calldata_pricing_increase_enabled = false;
+        let mut collect_tips_enabled = self
+            .arb_hooks
+            .as_ref()
+            .map(|h| h.collect_tips_enabled)
+            .unwrap_or(false);
         let db: &mut State<DB> = self.inner.evm_mut().db_mut();
         if let Ok(arb_state) = ArbosState::open(db, SystemBurner::new(None, false)) {
             // SAFETY: see `Storage::state_mut()` invariant.
@@ -544,10 +552,28 @@ where
             if let Ok(infra) = arb_state.infra_fee_account(state_ref) {
                 self.arb_ctx.infra_fee_account = infra;
             }
+            if let Ok(min_fee) = arb_state.l2_pricing_state.min_base_fee_wei(state_ref) {
+                self.arb_ctx.min_base_fee = min_fee;
+            }
+            if let Ok(level) = arb_state.brotli_compression_level(state_ref) {
+                self.arb_ctx.brotli_compression_level = level;
+            }
+            calldata_pricing_increase_enabled = arbos_version
+                >= arb_chainspec::arbos_version::ARBOS_VERSION_40
+                && arb_state
+                    .features
+                    .is_increased_calldata_price_enabled(state_ref)
+                    .unwrap_or(false);
+            collect_tips_enabled = arb_state
+                .collect_tips(state_ref)
+                .unwrap_or(collect_tips_enabled);
         }
         if let Some(hooks) = self.arb_hooks.as_mut() {
             hooks.network_fee_account = self.arb_ctx.network_fee_account;
             hooks.infra_fee_account = self.arb_ctx.infra_fee_account;
+            hooks.min_base_fee = self.arb_ctx.min_base_fee;
+            hooks.calldata_pricing_increase_enabled = calldata_pricing_increase_enabled;
+            hooks.collect_tips_enabled = collect_tips_enabled;
         }
     }
 
@@ -1208,13 +1234,6 @@ where
             let base_fee = self.arb_ctx.basefee;
             let base_fee_u128: u128 = base_fee.try_into().unwrap_or(u128::MAX);
             let max_fee: u128 = revm::context_interface::Transaction::gas_price(&tx_env);
-            // Match Go's effective gas price (evm.GasPrice). Legacy / EIP-2930
-            // txs carry no priority-fee field (revm returns None); the sender
-            // pays the full gas_price, so the effective price is gas_price
-            // itself. EIP-1559 / 7702 pay base_fee + min(priority, max_fee -
-            // base_fee). Collapsing the missing priority to 0 would mis-price a
-            // legacy tx at base_fee, inflating its posterGas (posterCost /
-            // price) whenever CollectTips is on (ArbOS >= 9).
             let effective: u128 =
                 match revm::context_interface::Transaction::max_priority_fee_per_gas(&tx_env) {
                     Some(max_priority) => {
@@ -1856,13 +1875,11 @@ where
         }
 
         // BALANCE/SELFBALANCE correction: the reduced gas_limit above makes
-        // BuyGas charge `(posterGas + computeHoldGas) * baseFee` less than the
+        // BuyGas charge `(posterGas + computeHoldGas) * gasPrice` less than the
         // protocol requires, so the BALANCE handler subtracts this correction
         // whenever it queries the sender's balance.
         {
-            let correction = self
-                .arb_ctx
-                .basefee
+            let correction = actual_gas_price
                 .saturating_mul(U256::from(poster_gas.saturating_add(compute_hold_gas)));
             let correction_u128 = correction.try_into().unwrap_or(u128::MAX);
             self.precompile_ctx
@@ -1988,8 +2005,6 @@ where
         // the tip-drop cap below rewrites `tx_env.gas_price` to base_fee.
         {
             let base_fee_u128: u128 = self.arb_ctx.basefee.try_into().unwrap_or(u128::MAX);
-            // Legacy / EIP-2930 pay the full gas_price (no priority-fee field;
-            // revm returns None); EIP-1559 / 7702 pay base_fee + priority.
             let effective: u128 =
                 match revm::context_interface::Transaction::max_priority_fee_per_gas(&tx_env) {
                     Some(max_priority) => {
@@ -2145,6 +2160,13 @@ where
                 rollback_pre_exec_state(self, calldata_units)?;
                 return Err(BlockExecutionError::msg(format!(
                     "insufficient funds: address {sender} have {sender_balance} want {total_cost}"
+                )));
+            }
+
+            if calldata_floor_gas > tx_gas_limit {
+                rollback_pre_exec_state(self, calldata_units)?;
+                return Err(BlockExecutionError::msg(format!(
+                    "insufficient gas for floor data gas: address {sender} gas limit {tx_gas_limit} floor {calldata_floor_gas}"
                 )));
             }
         }
@@ -2354,16 +2376,21 @@ where
         // the single-gas pool), so the computation remainder fills the gap on
         // the no-inspector path without double-counting on the inspector path.
         let raw_gas_used = evm_gas_used.saturating_add(gas_refunded);
+        // Gas burned by a Stylus frame that aborts at the upfront-cost gate is
+        // spent but belongs to no resource dimension; exclude it from the total
+        // the split must reach so it is not folded into computation.
+        let stylus_upfront_oog_gas = self.precompile_ctx.stylus_upfront_oog_gas();
+        let dimensionable_gas = raw_gas_used.saturating_sub(stylus_upfront_oog_gas);
         let execution_multi_gas = match self.multi_gas_sink.lock().take() {
             Some(opcode_gas) => {
                 let observed = intrinsic_multi_gas
                     .saturating_add(opcode_gas)
                     .saturating_add(dimensioned);
-                let remainder = raw_gas_used.saturating_sub(observed.single_gas());
+                let remainder = dimensionable_gas.saturating_sub(observed.single_gas());
                 observed.saturating_add(MultiGas::computation_gas(remainder))
             }
             None => {
-                let remainder = raw_gas_used.saturating_sub(dimensioned.single_gas());
+                let remainder = dimensionable_gas.saturating_sub(dimensioned.single_gas());
                 dimensioned.saturating_add(MultiGas::computation_gas(remainder))
             }
         };
@@ -2372,8 +2399,8 @@ where
         // the multi-dimensional cost and corrupt the v60 refund.
         debug_assert_eq!(
             execution_multi_gas.single_gas(),
-            raw_gas_used,
-            "multi-gas split must total the raw pre-refund gas",
+            dimensionable_gas,
+            "multi-gas split must total the dimensionable gas",
         );
         let mut charged_multi_gas =
             MultiGas::single_dim_gas(poster_gas).saturating_add(execution_multi_gas);
@@ -2384,9 +2411,14 @@ where
         // exact). The sender pays the floor via the existing sender_extra_gas.
         let gas_before_floor = output.result.result.gas_used();
         if calldata_floor_gas > gas_before_floor {
-            let top_up = calldata_floor_gas - gas_before_floor;
-            adjust_result_gas_used(&mut output.result.result, top_up);
-            charged_multi_gas = charged_multi_gas.saturating_add(MultiGas::l2_calldata_gas(top_up));
+            let receipt_top_up = calldata_floor_gas - gas_before_floor;
+            adjust_result_gas_used(&mut output.result.result, receipt_top_up);
+            let dim_single = charged_multi_gas.single_gas();
+            if calldata_floor_gas > dim_single {
+                let dim_top_up = calldata_floor_gas - dim_single;
+                charged_multi_gas =
+                    charged_multi_gas.saturating_add(MultiGas::l2_calldata_gas(dim_top_up));
+            }
         }
 
         // Capture effective tip per gas (gas_price - base_fee, clamped >= 0).
@@ -2483,15 +2515,16 @@ where
 
         let gas_used = self.inner.commit_transaction(output)?;
 
-        // A fee-collector setter flags the change; refresh the cached collectors
-        // so it takes effect within the block, including the setting tx's own fee.
+        // An owner setter flags a per-tx state-parameter change; refresh the
+        // cached values so it takes effect within the block, including the
+        // setting transaction's own subsequent accounting.
         if self
             .precompile_ctx
             .block
-            .fee_collectors_dirty
+            .state_params_dirty
             .swap(false, std::sync::atomic::Ordering::Relaxed)
         {
-            self.refresh_fee_collectors();
+            self.refresh_state_params();
         }
 
         // Redirect the coinbase tip to network_fee_account when
@@ -2539,6 +2572,51 @@ where
                 self.touched_accounts.insert(p.sender);
                 self.touched_accounts
                     .insert(self.arb_ctx.network_fee_account);
+            }
+        }
+
+        // Cancelled-retryable escrow sweep: move the ticket's escrow balance to
+        // its beneficiary in the same block, through the cache and overlay so it
+        // forms a single state transition.
+        if let Some((escrow, beneficiary)) = self.precompile_ctx.take_cancel_escrow_sweep() {
+            let arbos_ver = self.arb_ctx.arbos_version;
+            let touched_ptr = &mut self.touched_accounts as *mut rustc_hash::FxHashSet<Address>;
+            let zombie_ptr = &mut self.zombie_accounts as *mut rustc_hash::FxHashSet<Address>;
+            let finalise_ptr = &self.finalise_deleted as *const rustc_hash::FxHashSet<Address>;
+            let overlay_ptr = &mut self.state_overlay as *mut StateOverlay;
+            let db: &mut State<DB> = self.inner.evm_mut().db_mut();
+            let amount = get_balance(db, escrow);
+
+            // SAFETY: see `Storage::state_mut()` invariant. The pointers reborrow
+            // disjoint fields of `self` (`touched_accounts`, `zombie_accounts`,
+            // `finalise_deleted`, `state_overlay`); `db` borrows `self.inner`. No
+            // two of these alias within this block.
+            unsafe {
+                if amount.is_zero()
+                    && arbos_ver < arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS
+                {
+                    create_zombie_if_deleted(
+                        db,
+                        &mut *overlay_ptr,
+                        escrow,
+                        &*finalise_ptr,
+                        &mut *zombie_ptr,
+                        &mut *touched_ptr,
+                    );
+                }
+                let _ = apply_balance_op(
+                    db,
+                    &mut *overlay_ptr,
+                    Some(&escrow),
+                    Some(&beneficiary),
+                    amount,
+                );
+                if !amount.is_zero() {
+                    (*zombie_ptr).remove(&escrow);
+                }
+                (*zombie_ptr).remove(&beneficiary);
+                (*touched_ptr).insert(escrow);
+                (*touched_ptr).insert(beneficiary);
             }
         }
 

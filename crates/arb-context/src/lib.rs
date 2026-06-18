@@ -77,10 +77,10 @@ pub struct BlockCtx {
     pub allow_debug_precompiles: bool,
     /// Live counter mutated by the executor between transactions in the same block.
     pub current_gas_backlog: AtomicU64,
-    /// Set by the fee-collector setters when a transaction changes the network
-    /// or infrastructure fee account; the executor refreshes its cached
-    /// collectors and clears it after the transaction.
-    pub fee_collectors_dirty: AtomicBool,
+    /// Set by an owner setter when a transaction changes a per-tx state
+    /// parameter (fee collectors, minimum base fee, brotli level, calldata
+    /// pricing); the executor refreshes its cached values after the transaction.
+    pub state_params_dirty: AtomicBool,
     pub chain_caches: Arc<ChainCaches>,
     pub recent_wasms: Mutex<RecentWasms>,
     /// Per-block descriptor cache for the detached [`ArbosState`].
@@ -143,7 +143,7 @@ impl BlockCtx {
             l2_block_number,
             allow_debug_precompiles,
             current_gas_backlog: AtomicU64::new(0),
-            fee_collectors_dirty: AtomicBool::new(false),
+            state_params_dirty: AtomicBool::new(false),
             chain_caches,
             recent_wasms: Mutex::new(RecentWasms::default()),
             arbos_state: OnceLock::new(),
@@ -251,6 +251,8 @@ pub struct TxCtx {
     pub stylus_pages_ever: u16,
     pub stylus_multi_gas: MultiGas,
     pub precompile_multi_gas: MultiGas,
+    pub stylus_upfront_oog_gas: u64,
+    pub cancel_escrow_sweep: Option<(Address, Address)>,
 }
 
 impl TxCtx {
@@ -272,6 +274,9 @@ pub struct ArbPrecompileCtx {
     /// precompile handlers can resolve the on-chain caller at arbitrary
     /// depth (alloy-evm's `EvmInternals` does not surface this).
     pub caller_stack: Arc<Mutex<Vec<Address>>>,
+    /// Number of Stylus program frames currently on the call stack. Lets a
+    /// frame tell whether it has a Stylus ancestor.
+    pub stylus_frame_depth: Arc<AtomicUsize>,
 }
 
 impl ArbPrecompileCtx {
@@ -285,6 +290,7 @@ impl ArbPrecompileCtx {
             tx: Arc::new(Mutex::new(TxCtx::default())),
             evm_depth: Arc::new(AtomicUsize::new(0)),
             caller_stack: Arc::new(Mutex::new(Vec::new())),
+            stylus_frame_depth: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -339,6 +345,20 @@ impl ArbPrecompileCtx {
         self.evm_depth.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Marks entry to a Stylus frame, returning the new Stylus call depth (1 for
+    /// the outermost Stylus frame).
+    pub fn enter_stylus_frame(&self) -> usize {
+        self.stylus_frame_depth
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1
+    }
+
+    /// Marks exit from a Stylus frame.
+    pub fn exit_stylus_frame(&self) {
+        self.stylus_frame_depth
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn push_caller(&self, caller: Address) {
         self.caller_stack.lock().push(caller);
     }
@@ -366,6 +386,14 @@ impl ArbPrecompileCtx {
 
     pub fn take_stylus_activation_addr(&self) -> Option<Address> {
         self.tx.lock().stylus_activation_addr.take()
+    }
+
+    pub fn set_cancel_escrow_sweep(&self, escrow: Address, beneficiary: Address) {
+        self.tx.lock().cancel_escrow_sweep = Some((escrow, beneficiary));
+    }
+
+    pub fn take_cancel_escrow_sweep(&self) -> Option<(Address, Address)> {
+        self.tx.lock().cancel_escrow_sweep.take()
     }
 
     pub fn set_stylus_keepalive_hash(&self, hash: Option<B256>) {
@@ -399,6 +427,15 @@ impl ArbPrecompileCtx {
 
     pub fn stylus_multi_gas(&self) -> MultiGas {
         self.tx.lock().stylus_multi_gas
+    }
+
+    pub fn add_stylus_upfront_oog_gas(&self, gas: u64) {
+        let mut tx = self.tx.lock();
+        tx.stylus_upfront_oog_gas = tx.stylus_upfront_oog_gas.saturating_add(gas);
+    }
+
+    pub fn stylus_upfront_oog_gas(&self) -> u64 {
+        self.tx.lock().stylus_upfront_oog_gas
     }
 
     /// Accumulate per-dimension gas for a precompile charge. The single-gas
