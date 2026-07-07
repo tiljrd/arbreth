@@ -2190,7 +2190,11 @@ where
                 TxKind::Call(a) => Some(a),
                 _ => None,
             };
-            if to_addr == Some(arb_precompiles::ARBWASM_ADDRESS) {
+            // Read the same version snapshot the precompile map was registered
+            // with, so the stash is armed iff ArbWasm is dispatchable.
+            let arbwasm_active = self.precompile_ctx.block.arbos_version
+                >= arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS;
+            if arbwasm_active && to_addr == Some(arb_precompiles::ARBWASM_ADDRESS) {
                 self.precompile_ctx.set_stylus_call_value(tx_value);
                 if tx_value > U256::ZERO {
                     tx_env.set_value(U256::ZERO);
