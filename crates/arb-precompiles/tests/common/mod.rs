@@ -348,6 +348,14 @@ impl PrecompileRun {
             Ok(out) => panic!("expected Err, got Ok with {} bytes", out.bytes.len()),
         }
     }
+    pub fn assert_halt(&self) {
+        let out = self.assert_ok();
+        assert!(
+            matches!(out.status, revm::precompile::PrecompileStatus::Halt(_)),
+            "expected halt, got {:?}",
+            out.status
+        );
+    }
     pub fn assert_oog(&self) {
         let out = self.assert_ok();
         assert!(

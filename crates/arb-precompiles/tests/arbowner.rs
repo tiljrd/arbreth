@@ -56,7 +56,7 @@ fn rejects_caller_not_in_chain_owners() {
         .arbos_state()
         .gas(100_000)
         .call(arbowner, &calldata("getNetworkFeeAccount()", &[]));
-    assert!(run.result.is_err());
+    run.assert_halt();
 }
 
 #[test]
@@ -612,7 +612,7 @@ mod stylus_params {
                 arbowner,
                 &calldata("setWasmFreePages(uint16)", &[word_u256(U256::from(65536))]),
             );
-        run.assert_err();
+        run.assert_halt();
     }
 
     #[test]
@@ -626,6 +626,6 @@ mod stylus_params {
                     &[word_u256(U256::from(10)), word_u256(U256::from(70000))],
                 ),
             );
-        run.assert_err();
+        run.assert_halt();
     }
 }
