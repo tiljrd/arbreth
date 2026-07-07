@@ -636,12 +636,6 @@ impl<'de> serde::Deserialize<'de> for ArbReceipt {
 }
 
 // ---------------------------------------------------------------------------
-// RlpBincode — required by SerdeBincodeCompat
-// ---------------------------------------------------------------------------
-
-impl reth_primitives_traits::serde_bincode_compat::RlpBincode for ArbReceipt {}
-
-// ---------------------------------------------------------------------------
 // Compact — storage encoding (includes gas_used_for_l1)
 // ---------------------------------------------------------------------------
 

@@ -862,12 +862,6 @@ impl<'de> serde::Deserialize<'de> for ArbTransactionSigned {
 }
 
 // ---------------------------------------------------------------------------
-// RlpBincode — required by SerdeBincodeCompat
-// ---------------------------------------------------------------------------
-
-impl reth_primitives_traits::serde_bincode_compat::RlpBincode for ArbTransactionSigned {}
-
-// ---------------------------------------------------------------------------
 // Compact — required by MaybeCompact when reth-codec feature is active
 // ---------------------------------------------------------------------------
 
