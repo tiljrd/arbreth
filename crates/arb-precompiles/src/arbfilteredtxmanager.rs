@@ -4,10 +4,10 @@ use alloy_sol_types::{SolEvent, SolInterface};
 use arb_context::ArbPrecompileCtx;
 use arb_storage::{ARBOS_STATE_ADDRESS, FILTERED_TX_STATE_ADDRESS};
 
-use revm::precompile::{PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
-use crate::{interfaces::IArbFilteredTxManager, ArbPrecompileError};
+use crate::{error::try_or_halt, interfaces::IArbFilteredTxManager, ArbPrecompileError};
 
 /// ArbFilteredTransactionsManager precompile address (0x74).
 pub const ARBFILTEREDTXMANAGER_ADDRESS: Address = Address::new([
@@ -23,7 +23,7 @@ const LOG_GAS: u64 = 375 + 2 * 375;
 
 pub fn create_arbfilteredtxmanager_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbfilteredtxmanager"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -46,17 +46,19 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     let mut wrapper_gas_used = 0u64;
     crate::charge_storage_read(&mut wrapper_gas_used, ctx, SLOAD_GAS);
     let caller = input.caller;
-    load_accounts(&mut input)?;
+    try_or_halt!(load_accounts(&mut input));
     let is_filterer = {
         let internals = input.internals_mut();
         let arb_state = ctx
             .block
             .arbos_state(internals)
-            .map_err(ArbPrecompileError::fatal)?;
+            .map_err(ArbPrecompileError::fatal);
+        let arb_state = try_or_halt!(arb_state);
         let res = arb_state
             .transaction_filterers
             .is_member(internals, caller)
-            .map_err(ArbPrecompileError::fatal)?;
+            .map_err(ArbPrecompileError::fatal);
+        let res = try_or_halt!(res);
         crate::charge_storage_read(&mut wrapper_gas_used, ctx, SLOAD_GAS);
         res
     };
@@ -78,7 +80,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
                 if is_filterer {
                     ctx.restore_precompile_multi_gas(mg_snapshot);
                 }
-                return Ok(PrecompileOutput::new_reverted(
+                return Ok(crate::revert_output(
                     final_gas,
                     Default::default(),
                 ));
@@ -115,7 +117,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         );
     }
     match inner_result {
-        Ok(_) if gas_used > gas_limit => Ok(PrecompileOutput::new_reverted(
+        Ok(_) if gas_used > gas_limit => Ok(crate::revert_output(
             final_gas,
             Default::default(),
         )),
@@ -123,11 +125,11 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             output.gas_used = final_gas;
             Ok(output)
         }
-        Err(PrecompileError::Other(_)) => Ok(PrecompileOutput::new_reverted(
+        Err(ArbPrecompileError::Revert { .. }) => Ok(crate::revert_output(
             final_gas,
             Default::default(),
         )),
-        Err(e) => Err(e),
+        Err(e) => e.into_halt_result(),
     }
 }
 
@@ -170,7 +172,7 @@ fn handle_is_tx_filtered(
     gas_used: &mut u64,
     tx_hash: B256,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     // A view method rejects call value and DELEGATECALL.
     if !input.value.is_zero() || input.target_address != input.bytecode_address {
@@ -196,7 +198,7 @@ fn handle_is_tx_filtered(
     };
 
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         is_filtered.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -207,7 +209,7 @@ fn handle_add_filtered_tx(
     gas_used: &mut u64,
     tx_hash: B256,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
     // Value, read-only and delegate context revert via the wrapper's gas.
@@ -243,7 +245,7 @@ fn handle_add_filtered_tx(
     ));
     crate::charge_history_growth(gas_used, ctx, LOG_GAS);
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         vec![].into(),
     ))
@@ -254,7 +256,7 @@ fn handle_delete_filtered_tx(
     gas_used: &mut u64,
     tx_hash: B256,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
     // Value, read-only and delegate context revert via the wrapper's gas.
@@ -290,7 +292,7 @@ fn handle_delete_filtered_tx(
     ));
     crate::charge_history_growth(gas_used, ctx, LOG_GAS);
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         vec![].into(),
     ))

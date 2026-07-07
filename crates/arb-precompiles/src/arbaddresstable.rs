@@ -4,7 +4,7 @@ use alloy_sol_types::SolInterface;
 use arb_context::ArbPrecompileCtx;
 use arb_storage::{write_cost, ARBOS_STATE_ADDRESS, STORAGE_READ_GAS, STORAGE_WRITE_GAS};
 use arbos::address_table::AddressTableError;
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::{interfaces::IArbAddressTable, ArbPrecompileError};
@@ -21,7 +21,7 @@ const COPY_GAS: u64 = 3;
 
 pub fn create_arbaddresstable_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbaddresstable"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -79,7 +79,7 @@ fn handle_size(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -94,7 +94,7 @@ fn handle_size(
 
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         U256::from(size).to_be_bytes::<32>().to_vec().into(),
     ))
@@ -105,7 +105,7 @@ fn handle_address_exists(
     gas_used: &mut u64,
     addr: Address,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -121,7 +121,7 @@ fn handle_address_exists(
 
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         value.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -132,7 +132,7 @@ fn handle_lookup(
     gas_used: &mut u64,
     addr: Address,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -151,7 +151,7 @@ fn handle_lookup(
 
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         U256::from(index).to_be_bytes::<32>().to_vec().into(),
     ))
@@ -162,7 +162,7 @@ fn handle_lookup_index(
     gas_used: &mut u64,
     index_u256: U256,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let index: u64 = index_u256
         .try_into()
@@ -190,7 +190,7 @@ fn handle_lookup_index(
 
     crate::charge_storage_read(gas_used, ctx, 2 * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.to_vec().into(),
     ))
@@ -201,7 +201,7 @@ fn handle_register(
     gas_used: &mut u64,
     addr: Address,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -218,7 +218,7 @@ fn handle_register(
     if already_registered {
         crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
         crate::charge_computation(gas_used, ctx, COPY_GAS);
-        return Ok(PrecompileOutput::new(
+        return Ok(crate::output(
             (*gas_used).min(gas_limit),
             U256::from(index).to_be_bytes::<32>().to_vec().into(),
         ));
@@ -228,7 +228,7 @@ fn handle_register(
     crate::charge_storage_write(gas_used, ctx, 2 * SSTORE_GAS + write_cost(addr.is_zero()));
     crate::charge_computation(gas_used, ctx, COPY_GAS);
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         U256::from(index).to_be_bytes::<32>().to_vec().into(),
     ))
@@ -239,7 +239,7 @@ fn handle_compress(
     gas_used: &mut u64,
     addr: Address,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -262,7 +262,7 @@ fn handle_compress(
     let result_words = (output.len() as u64).div_ceil(32);
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, result_words * COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         output.into(),
     ))
@@ -274,7 +274,7 @@ fn handle_decompress(
     buf: &Bytes,
     offset: U256,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let ioffset: usize = offset
         .try_into()
@@ -314,7 +314,7 @@ fn handle_decompress(
     let body_sloads: u64 = if raw_address { 0 } else { 2 };
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, 2 * COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         output.into(),
     ))

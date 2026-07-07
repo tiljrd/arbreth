@@ -5,7 +5,7 @@ use alloy_sol_types::SolInterface;
 use arb_context::ArbPrecompileCtx;
 use arb_storage::ARBOS_STATE_ADDRESS;
 
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::{interfaces::INodeInterface, ArbPrecompileError};
@@ -21,7 +21,7 @@ const COPY_GAS: u64 = 3;
 
 pub fn create_nodeinterface_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("nodeinterface"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -59,7 +59,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
 fn handle_gas_estimate_components(
     input: &mut PrecompileInput<'_>,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
 
@@ -80,7 +80,7 @@ fn handle_gas_estimate_components(
     out.extend_from_slice(&basefee.to_be_bytes::<32>());
     out.extend_from_slice(&l1_price.to_be_bytes::<32>());
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (2 * SLOAD_GAS + COPY_GAS).min(gas_limit),
         out.into(),
     ))
@@ -92,7 +92,7 @@ fn handle_gas_estimate_components(
 fn handle_gas_estimate_l1_component(
     input: &mut PrecompileInput<'_>,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
 
@@ -112,7 +112,7 @@ fn handle_gas_estimate_l1_component(
     out.extend_from_slice(&basefee.to_be_bytes::<32>());
     out.extend_from_slice(&l1_price.to_be_bytes::<32>());
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (2 * SLOAD_GAS + COPY_GAS).min(gas_limit),
         out.into(),
     ))
@@ -122,7 +122,7 @@ fn handle_gas_estimate_l1_component(
 fn handle_nitro_genesis_block(
     input: &mut PrecompileInput<'_>,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
 
@@ -136,7 +136,7 @@ fn handle_nitro_genesis_block(
         .get(internals)
         .map_err(ArbPrecompileError::fatal)?;
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (SLOAD_GAS + COPY_GAS).min(gas_limit),
         U256::from(genesis_block_num)
             .to_be_bytes::<32>()
@@ -149,16 +149,16 @@ fn handle_block_l1_num(
     input: &PrecompileInput<'_>,
     ctx: &ArbPrecompileCtx,
     block_num: u64,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let l1_block = ctx.block.cached_l1_block_number(block_num).unwrap_or(0);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         COPY_GAS.min(input.gas),
         U256::from(l1_block).to_be_bytes::<32>().to_vec().into(),
     ))
 }
 
-fn handle_zero_u64(input: &PrecompileInput<'_>) -> PrecompileResult {
-    Ok(PrecompileOutput::new(
+fn handle_zero_u64(input: &PrecompileInput<'_>) -> crate::ArbPrecompileResult {
+    Ok(crate::output(
         COPY_GAS.min(input.gas),
         U256::ZERO.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -171,7 +171,7 @@ fn handle_zero_u64(input: &PrecompileInput<'_>) -> PrecompileResult {
 ///   (bytes32[] proof, uint256 path, address l2Sender, address l1Dest,
 ///    uint256 l2Block, uint256 l1Block, uint256 timestamp, uint256 amount,
 ///    bytes calldataForL1)
-fn handle_legacy_lookup_empty(input: &PrecompileInput<'_>) -> PrecompileResult {
+fn handle_legacy_lookup_empty(input: &PrecompileInput<'_>) -> crate::ArbPrecompileResult {
     let mut out = vec![0u8; 0x160];
     U256::from(0x140u64)
         .to_be_bytes::<32>()
@@ -183,7 +183,7 @@ fn handle_legacy_lookup_empty(input: &PrecompileInput<'_>) -> PrecompileResult {
         .iter()
         .enumerate()
         .for_each(|(i, b)| out[0x100 + i] = *b);
-    Ok(PrecompileOutput::new(COPY_GAS.min(input.gas), out.into()))
+    Ok(crate::output(COPY_GAS.min(input.gas), out.into()))
 }
 
 fn read_estimate_fields(

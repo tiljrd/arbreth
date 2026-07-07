@@ -2,7 +2,7 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolInterface;
 use arb_context::ArbPrecompileCtx;
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::{interfaces::IArbFunctionTable, ArbPrecompileError};
@@ -17,7 +17,7 @@ const COPY_GAS: u64 = 3;
 
 pub fn create_arbfunctiontable_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbfunctiontable"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -53,14 +53,14 @@ fn handler(input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> PrecompileResu
     use IArbFunctionTable::ArbFunctionTableCalls;
     let result = match call {
         // Upload: no-op. Cost = OpenArbosState + argsCost (pre-charged).
-        ArbFunctionTableCalls::upload(_) => Ok(PrecompileOutput::new(
+        ArbFunctionTableCalls::upload(_) => Ok(crate::output(
             gas_used.min(gas_limit),
             vec![].into(),
         )),
         // Size: no-op returning 0. Cost = OpenArbosState + argsCost + 1-word resultCost.
         ArbFunctionTableCalls::size(_) => {
             crate::charge_computation(&mut gas_used, ctx, COPY_GAS);
-            Ok(PrecompileOutput::new(
+            Ok(crate::output(
                 gas_used.min(gas_limit),
                 U256::ZERO.to_be_bytes::<32>().to_vec().into(),
             ))

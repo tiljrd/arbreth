@@ -5,7 +5,7 @@ use arb_context::ArbPrecompileCtx;
 use arb_storage::ARBOS_STATE_ADDRESS;
 
 use revm::{
-    precompile::{PrecompileId, PrecompileOutput, PrecompileResult},
+    precompile::{PrecompileId, PrecompileResult},
     primitives::Log,
 };
 use std::sync::Arc;
@@ -27,7 +27,7 @@ const LOG_DATA_GAS: u64 = 8;
 
 pub fn create_arbdebug_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbdebug"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -85,7 +85,7 @@ fn handle_become_chain_owner(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let caller = input.caller;
     let gas_limit = input.gas;
 
@@ -115,7 +115,7 @@ fn handle_become_chain_owner(
         crate::charge_storage_write(gas_used, ctx, 3 * SSTORE_GAS);
     }
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -127,7 +127,7 @@ fn handle_events(
     ctx: &ArbPrecompileCtx,
     flag: bool,
     value: B256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
     let value_received = input.value;
@@ -149,7 +149,7 @@ fn handle_events(
     let mixed_log_gas = LOG_GAS + LOG_TOPIC_GAS * 4 + LOG_DATA_GAS * 64;
     crate::charge_history_growth(gas_used, ctx, basic_log_gas + mixed_log_gas);
     crate::charge_computation(gas_used, ctx, COPY_GAS * result_words);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.into(),
     ))
@@ -159,7 +159,7 @@ fn handle_events_view(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     // v < 11: view-method log writes are permitted; emit and succeed.
     // v >= 11: framework rejects with ErrWriteProtection.
     if ctx.block.arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_11 {
@@ -183,7 +183,7 @@ fn handle_events_view(
     let mixed_log_gas = LOG_GAS + LOG_TOPIC_GAS * 4 + LOG_DATA_GAS * 64;
     crate::charge_history_growth(gas_used, ctx, basic_log_gas + mixed_log_gas);
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -194,7 +194,7 @@ fn handle_custom_revert(
     ctx: &ArbPrecompileCtx,
     number: u64,
     gas_limit: u64,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let payload = IArbDebug::Custom {
         _0: number,
         _1: "This spider family wards off bugs: /\\oo/\\ //\\(oo)//\\ /\\oo/\\".to_string(),
@@ -227,7 +227,7 @@ fn handle_overwrite_contract_code(
     ctx: &ArbPrecompileCtx,
     target: Address,
     new_code: Bytes,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
 
     let old_code: Vec<u8> = match input.internals_mut().load_account_code(target) {
@@ -255,7 +255,7 @@ fn handle_overwrite_contract_code(
 
     let result_words = (out.len() as u64).div_ceil(32);
     crate::charge_computation(gas_used, ctx, COPY_GAS.saturating_mul(result_words));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.into(),
     ))

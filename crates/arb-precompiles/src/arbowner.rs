@@ -13,12 +13,12 @@ use arbos::{
     },
 };
 use revm::{
-    precompile::{PrecompileId, PrecompileOutput, PrecompileResult},
+    precompile::{PrecompileId, PrecompileResult},
     primitives::Log,
 };
 use std::sync::Arc;
 
-use crate::{interfaces::IArbOwner, ArbPrecompileError};
+use crate::{error::try_or_halt, interfaces::IArbOwner, ArbPrecompileError};
 
 /// ArbOwner precompile address (0x70).
 pub const ARBOWNER_ADDRESS: Address = Address::new([
@@ -39,7 +39,7 @@ const WARM_SLOAD_GAS: u64 = 100;
 
 pub fn create_arbowner_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbowner"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -97,7 +97,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
 
     if let Err(e) = verify_owner(&mut input, &mut gas_used, ctx) {
         ctx.restore_precompile_multi_gas(mg_snapshot);
-        return Err(e.into());
+        return e.into_halt_result();
     }
 
     let call = match IArbOwner::ArbOwnerCalls::abi_decode(data) {
@@ -301,36 +301,36 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
+            let val = try_or_halt!(read_u32_param(gas_used, data));
             write_stylus_param(&mut input, &mut gas_used, |p| p.max_stack_depth = val, ctx)
         }
         Calls::setWasmFreePages(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u16_param(gas_used, data, 0)?;
+            let val = try_or_halt!(read_u16_param(gas_used, data, 0));
             write_stylus_param(&mut input, &mut gas_used, |p| p.free_pages = val, ctx)
         }
         Calls::setWasmPageGas(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u16_param(gas_used, data, 0)?;
+            let val = try_or_halt!(read_u16_param(gas_used, data, 0));
             write_stylus_param(&mut input, &mut gas_used, |p| p.page_gas = val, ctx)
         }
         Calls::setWasmPageLimit(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u16_param(gas_used, data, 0)?;
+            let val = try_or_halt!(read_u16_param(gas_used, data, 0));
             write_stylus_param(&mut input, &mut gas_used, |p| p.page_limit = val, ctx)
         }
         Calls::setWasmMinInitGas(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let gas = read_u8_param(gas_used, data, 0)?;
-            let cached = read_u16_param(gas_used, data, 1)?;
+            let gas = try_or_halt!(read_u8_param(gas_used, data, 0));
+            let cached = try_or_halt!(read_u16_param(gas_used, data, 1));
             let min_init_gas = saturating_u8(div_ceil(gas as u64, MIN_INIT_GAS_UNITS));
             let min_cached_init_gas = saturating_u8(div_ceil(cached as u64, MIN_CACHED_GAS_UNITS));
             write_stylus_param(
@@ -347,7 +347,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let percent = read_u64_param(gas_used, data)?;
+            let percent = try_or_halt!(read_u64_param(gas_used, data));
             let stored = saturating_u8(div_ceil(percent, COST_SCALAR_PERCENT));
             write_stylus_param(
                 &mut input,
@@ -360,28 +360,28 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u16_param(gas_used, data, 0)?;
+            let val = try_or_halt!(read_u16_param(gas_used, data, 0));
             write_stylus_param(&mut input, &mut gas_used, |p| p.expiry_days = val, ctx)
         }
         Calls::setWasmKeepaliveDays(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u16_param(gas_used, data, 0)?;
+            let val = try_or_halt!(read_u16_param(gas_used, data, 0));
             write_stylus_param(&mut input, &mut gas_used, |p| p.keepalive_days = val, ctx)
         }
         Calls::setWasmBlockCacheSize(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 30, 0) {
                 return r;
             }
-            let val = read_u16_param(gas_used, data, 0)?;
+            let val = try_or_halt!(read_u16_param(gas_used, data, 0));
             write_stylus_param(&mut input, &mut gas_used, |p| p.block_cache_size = val, ctx)
         }
         Calls::setWasmMaxSize(_) => {
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 40, 0) {
                 return r;
             }
-            let val = read_u32_param(gas_used, data)?;
+            let val = try_or_halt!(read_u32_param(gas_used, data));
             write_stylus_param(&mut input, &mut gas_used, |p| p.max_wasm_size = val, ctx)
         }
         Calls::setWasmActivationGas(_) => {
@@ -403,7 +403,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             if let Some(r) = crate::check_method_version(ctx, gas_limit, 60, 0) {
                 return r;
             }
-            let val = read_u8_param(gas_used, data, 0)?;
+            let val = try_or_halt!(read_u8_param(gas_used, data, 0));
             write_stylus_param(
                 &mut input,
                 &mut gas_used,
@@ -538,22 +538,22 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
 
     let result = match result {
         Ok(output) => {
-            if output.reverted {
-                Ok(PrecompileOutput::new_reverted(0, output.bytes))
+            if output.is_revert() {
+                Ok(crate::revert_output(0, output.bytes))
             } else {
                 let arbos_version = ctx.block.arbos_version;
                 if !is_read_only || arbos_version < 11 {
                     emit_owner_acts(&mut input, &selector, data);
                 }
-                Ok(PrecompileOutput::new(0, output.bytes))
+                Ok(crate::output(0, output.bytes))
             }
         }
-        Err(_) => Ok(PrecompileOutput::new_reverted(0, Default::default())),
+        Err(_) => Ok(crate::revert_output(0, Default::default())),
     };
     ctx.restore_precompile_multi_gas(mg_snapshot);
     // Over-budget reverts billing zero gas, not out-of-gas burning the forwarded amount.
     if gas_used > gas_limit {
-        return Ok(PrecompileOutput::new_reverted(0, Default::default()));
+        return Ok(crate::revert_output(0, Default::default()));
     }
     result
 }
@@ -656,8 +656,8 @@ where
     .map_err(ArbPrecompileError::fatal)
 }
 
-fn field_read_output(gas_limit: u64, gas_used: u64, value: U256) -> PrecompileResult {
-    Ok(PrecompileOutput::new(
+fn field_read_output(gas_limit: u64, gas_used: u64, value: U256) -> crate::ArbPrecompileResult {
+    Ok(crate::output(
         gas_used.min(gas_limit),
         value.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -669,7 +669,7 @@ fn handle_get_network_fee_account(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -688,7 +688,7 @@ fn handle_get_infra_fee_account(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -707,7 +707,7 @@ fn handle_get_filtered_funds_recipient(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -728,7 +728,7 @@ fn handle_set_network_fee_account(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -748,7 +748,7 @@ fn handle_set_network_fee_account(
         .state_params_dirty
         .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::charge_precompile_gas(gas_used, write_cost(addr.is_zero()));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -758,7 +758,7 @@ fn handle_set_infra_fee_account(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -778,7 +778,7 @@ fn handle_set_infra_fee_account(
         .state_params_dirty
         .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::charge_precompile_gas(gas_used, write_cost(addr.is_zero()));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -788,7 +788,7 @@ fn handle_set_brotli_compression_level(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -813,7 +813,7 @@ fn handle_set_brotli_compression_level(
         Err(e) => return Err(ArbPrecompileError::fatal(e).into()),
     }
     crate::charge_precompile_gas(gas_used, write_cost(level == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -823,7 +823,7 @@ fn handle_set_filtered_funds_recipient(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -845,7 +845,7 @@ fn handle_set_filtered_funds_recipient(
         addr,
     );
     crate::charge_precompile_gas(gas_used, write_cost(addr.is_zero()));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -855,7 +855,7 @@ fn handle_schedule_upgrade(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 68 {
         return crate::burn_all_revert(input.gas);
@@ -876,7 +876,7 @@ fn handle_schedule_upgrade(
         gas_used,
         write_cost(new_version == 0) + write_cost(timestamp == 0),
     );
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -888,7 +888,7 @@ fn handle_set_speed_limit(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -906,7 +906,7 @@ fn handle_set_speed_limit(
         .set_speed_limit_per_second(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -916,7 +916,7 @@ fn handle_set_l2_base_fee(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -934,7 +934,7 @@ fn handle_set_l2_base_fee(
         .set_base_fee_wei(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val.is_zero()));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -944,7 +944,7 @@ fn handle_set_min_l2_base_fee(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -965,7 +965,7 @@ fn handle_set_min_l2_base_fee(
         .state_params_dirty
         .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::charge_precompile_gas(gas_used, write_cost(val.is_zero()));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -975,7 +975,7 @@ fn handle_set_max_block_gas_limit(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -993,7 +993,7 @@ fn handle_set_max_block_gas_limit(
         .set_max_per_block_gas_limit(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1003,7 +1003,7 @@ fn handle_set_max_tx_gas_limit(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1028,7 +1028,7 @@ fn handle_set_max_tx_gas_limit(
             .map_err(ArbPrecompileError::fatal)?;
     }
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1038,7 +1038,7 @@ fn handle_set_l2_pricing_inertia(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1056,7 +1056,7 @@ fn handle_set_l2_pricing_inertia(
         .set_pricing_inertia(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1066,7 +1066,7 @@ fn handle_set_l2_backlog_tolerance(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1084,7 +1084,7 @@ fn handle_set_l2_backlog_tolerance(
         .set_backlog_tolerance(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1094,7 +1094,7 @@ fn handle_set_gas_backlog(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1112,7 +1112,7 @@ fn handle_set_gas_backlog(
         .set_gas_backlog(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1124,7 +1124,7 @@ fn handle_set_l1_equilibration_units(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1142,7 +1142,7 @@ fn handle_set_l1_equilibration_units(
         .set_equilibration_units(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val.is_zero()));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1152,7 +1152,7 @@ fn handle_set_l1_inertia(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1170,7 +1170,7 @@ fn handle_set_l1_inertia(
         .set_inertia(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1180,7 +1180,7 @@ fn handle_set_l1_pay_rewards_to(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1198,7 +1198,7 @@ fn handle_set_l1_pay_rewards_to(
         .set_pay_rewards_to(internals, addr)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(addr.is_zero()));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1208,7 +1208,7 @@ fn handle_set_l1_per_unit_reward(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1226,7 +1226,7 @@ fn handle_set_l1_per_unit_reward(
         .set_per_unit_reward(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1236,7 +1236,7 @@ fn handle_set_l1_price_per_unit(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1254,7 +1254,7 @@ fn handle_set_l1_price_per_unit(
         .set_price_per_unit(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val.is_zero()));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1264,7 +1264,7 @@ fn handle_set_parent_gas_floor_per_token(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1282,7 +1282,7 @@ fn handle_set_parent_gas_floor_per_token(
         .set_parent_gas_floor_per_token(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1292,7 +1292,7 @@ fn handle_set_per_batch_gas_cost(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1313,7 +1313,7 @@ fn handle_set_per_batch_gas_cost(
         .set_per_batch_gas_cost(internals, val_i64)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val_i64 == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1323,7 +1323,7 @@ fn handle_set_amortized_cost_cap_bips(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1341,7 +1341,7 @@ fn handle_set_amortized_cost_cap_bips(
         .set_amortized_cost_cap_bips(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1354,7 +1354,7 @@ fn handle_is_member(
     gas_used: &mut u64,
     kind: AddressSetKind,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1376,7 +1376,7 @@ fn handle_is_member(
         U256::ZERO
     };
     crate::charge_precompile_gas(gas_used, SLOAD_GAS + COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         result.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -1387,7 +1387,7 @@ fn handle_get_all_members(
     gas_used: &mut u64,
     kind: AddressSetKind,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     const MAX_MEMBERS: u64 = 65_536;
     load_arbos(input)?;
@@ -1412,7 +1412,7 @@ fn handle_get_all_members(
 
     let extra = (1 + count) * SLOAD_GAS + COPY_GAS;
     crate::charge_precompile_gas(gas_used, extra);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.into(),
     ))
@@ -1422,7 +1422,7 @@ fn handle_add_chain_owner(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1449,7 +1449,7 @@ fn handle_add_chain_owner(
         gas_used,
         3 * SLOAD_GAS + 2 * SSTORE_GAS + write_cost(addr.is_zero()),
     );
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1459,7 +1459,7 @@ fn handle_remove_chain_owner(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1490,7 +1490,7 @@ fn handle_remove_chain_owner(
         emit_address_event(input, IArbOwner::ChainOwnerRemoved::SIGNATURE_HASH, addr);
     }
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1502,7 +1502,7 @@ fn handle_release_l1_pricer_surplus_funds(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1531,7 +1531,7 @@ fn handle_release_l1_pricer_surplus_funds(
 
     if pool_balance <= recognized {
         crate::charge_precompile_gas(gas_used, SLOAD_GAS + COPY_GAS + 100);
-        return Ok(PrecompileOutput::new(
+        return Ok(crate::output(
             (*gas_used).min(gas_limit),
             U256::ZERO.to_be_bytes::<32>().to_vec().into(),
         ));
@@ -1549,7 +1549,7 @@ fn handle_release_l1_pricer_surplus_funds(
         .map_err(ArbPrecompileError::fatal)?;
 
     crate::charge_precompile_gas(gas_used, SLOAD_GAS + SSTORE_GAS + COPY_GAS + 100);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         wei_to_transfer.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -1562,7 +1562,7 @@ fn write_stylus_param(
     gas_used: &mut u64,
     mutate: impl FnOnce(&mut StylusParams),
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -1580,7 +1580,7 @@ fn write_stylus_param(
         .save_params(internals, &params)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, WARM_SLOAD_GAS + SSTORE_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1591,7 +1591,7 @@ fn handle_set_activation_gas(
     gas_used: &mut u64,
     value: U256,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -1605,7 +1605,7 @@ fn handle_set_activation_gas(
         .set_activation_gas(internals, value_u64)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(value_u64 == 0));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1662,7 +1662,7 @@ fn handle_add_cache_manager(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1684,7 +1684,7 @@ fn handle_add_cache_manager(
         gas_used,
         3 * SLOAD_GAS + 2 * SSTORE_GAS + write_cost(addr.is_zero()),
     );
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1694,7 +1694,7 @@ fn handle_remove_cache_manager(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1722,7 +1722,7 @@ fn handle_remove_cache_manager(
         .cache_managers
         .remove(internals, addr, arbos_version, gas_used)
         .map_err(ArbPrecompileError::fatal)?;
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1736,7 +1736,7 @@ fn handle_set_feature_time(
     gas_used: &mut u64,
     kind: FeatureTimeKind,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1761,7 +1761,7 @@ fn handle_set_feature_time(
     if timestamp == 0 {
         write_feature_time(arb_state, internals, kind, 0)?;
         crate::charge_precompile_gas(gas_used, write_cost(true));
-        return Ok(PrecompileOutput::new(
+        return Ok(crate::output(
             (*gas_used).min(gas_limit),
             Vec::new().into(),
         ));
@@ -1780,7 +1780,7 @@ fn handle_set_feature_time(
 
     write_feature_time(arb_state, internals, kind, timestamp)?;
     crate::charge_precompile_gas(gas_used, SLOAD_GAS + SSTORE_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1802,7 +1802,7 @@ fn handle_add_to_set_with_feature_check(
     feature_kind: FeatureTimeKind,
     event_topic: Option<B256>,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1839,7 +1839,7 @@ fn handle_add_to_set_with_feature_check(
         gas_used,
         4 * SLOAD_GAS + 2 * SSTORE_GAS + write_cost(addr.is_zero()),
     );
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1851,7 +1851,7 @@ fn handle_remove_from_set(
     set_kind: AddressSetKind,
     event_topic: Option<B256>,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -1882,7 +1882,7 @@ fn handle_remove_from_set(
         emit_address_event(input, topic0, addr);
     }
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1897,7 +1897,7 @@ fn handle_set_gas_pricing_constraints(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     // Minimum: selector(4) + offset(32) + length(32) = 68 bytes
     if data.len() < 68 {
@@ -1959,7 +1959,7 @@ fn handle_set_gas_pricing_constraints(
 
     // The constraint storage is written through the system burner, so it costs
     // no EVM gas to the transaction, matching `setMultiGasPricingConstraints`.
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -1971,7 +1971,7 @@ fn handle_set_multi_gas_pricing_constraints(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 68 {
         return crate::burn_all_revert(input.gas);
@@ -2072,7 +2072,7 @@ fn handle_set_multi_gas_pricing_constraints(
 
     // The constraint storage is written through the system burner, so it costs
     // no EVM gas to the transaction.
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -2154,7 +2154,7 @@ fn handle_set_chain_config(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 68 {
         return crate::burn_all_revert(input.gas);
@@ -2198,7 +2198,7 @@ fn handle_set_chain_config(
         + new_full_words * SSTORE_GAS
         + tail_write;
     crate::charge_precompile_gas(gas_used, extra);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -2208,7 +2208,7 @@ fn handle_set_calldata_price_increase(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -2231,7 +2231,7 @@ fn handle_set_calldata_price_increase(
         .store(true, std::sync::atomic::Ordering::Relaxed);
 
     crate::charge_precompile_gas(gas_used, SLOAD_GAS + write_cost(new_features == U256::ZERO));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -2241,7 +2241,7 @@ fn handle_set_collect_tips(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data = input.data;
     if data.len() < 36 {
         return crate::burn_all_revert(input.gas);
@@ -2262,7 +2262,7 @@ fn handle_set_collect_tips(
         .state_params_dirty
         .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::charge_precompile_gas(gas_used, write_cost(!enabled));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))

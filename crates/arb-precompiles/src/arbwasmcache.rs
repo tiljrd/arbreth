@@ -4,7 +4,7 @@ use alloy_sol_types::{SolError, SolEvent, SolInterface};
 use arb_context::ArbPrecompileCtx;
 use arb_storage::ARBOS_STATE_ADDRESS;
 use arbos::programs::{params::StylusParams, Program};
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::{
@@ -31,7 +31,7 @@ const EMIT_UPDATE_PROGRAM_CACHE_GAS: u64 = 375 + 3 * 375 + 32 * 8;
 
 pub fn create_arbwasmcache_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbwasmcache"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -117,7 +117,7 @@ fn handle_is_cache_manager(
     gas_used: &mut u64,
     addr: Address,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
 
@@ -139,7 +139,7 @@ fn handle_is_cache_manager(
     };
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         result.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -150,7 +150,7 @@ fn handle_all_cache_managers(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
 
@@ -178,7 +178,7 @@ fn handle_all_cache_managers(
 
     crate::charge_storage_read(gas_used, ctx, sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(out.len() as u64));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.into(),
     ))
@@ -189,7 +189,7 @@ fn handle_codehash_is_cached(
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
     codehash: B256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
 
@@ -211,7 +211,7 @@ fn handle_codehash_is_cached(
     };
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         result.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -276,7 +276,7 @@ fn set_program_cached(
     codehash: B256,
     cache: bool,
     pre_set_gas: u64,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let caller = input.caller;
     let now = ctx.block.block_timestamp;
     let gas_limit = input.gas;
@@ -318,7 +318,7 @@ fn set_program_cached(
     }
     if already_cached == cache {
         // The cache state is unchanged; return without any further read.
-        return Ok(PrecompileOutput::new(
+        return Ok(crate::output(
             (*gas_used).min(gas_limit),
             Vec::new().into(),
         ));
@@ -363,7 +363,7 @@ fn set_program_cached(
     crate::charge_storage_read(gas_used, ctx, prog_init_cost as u64);
     crate::charge_history_growth(gas_used, ctx, EMIT_UPDATE_PROGRAM_CACHE_GAS);
     crate::charge_storage_write(gas_used, ctx, sstore_gas);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))
@@ -380,7 +380,7 @@ fn handle_cache_codehash(
     ctx: &ArbPrecompileCtx,
     gas_used: &mut u64,
     codehash: B256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     if let Some(r) = crate::check_method_version(
         ctx,
         input.gas,
@@ -399,7 +399,7 @@ fn handle_cache_program(
     ctx: &ArbPrecompileCtx,
     gas_used: &mut u64,
     addr: Address,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     if let Some(r) = crate::check_method_version(
         ctx,
         input.gas,
@@ -429,6 +429,6 @@ fn handle_evict_codehash(
     ctx: &ArbPrecompileCtx,
     gas_used: &mut u64,
     codehash: B256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     set_program_cached(input, ctx, gas_used, codehash, false, 0)
 }

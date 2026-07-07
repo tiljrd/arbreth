@@ -53,7 +53,7 @@ pub use arbstatistics::{create_arbstatistics_precompile, ARBSTATISTICS_ADDRESS};
 pub use arbsys::{create_arbsys_precompile, ARBSYS_ADDRESS};
 pub use arbwasm::{create_arbwasm_precompile, ARBWASM_ADDRESS};
 pub use arbwasmcache::{create_arbwasmcache_precompile, ARBWASMCACHE_ADDRESS};
-pub use error::ArbPrecompileError;
+pub use error::{ArbPrecompileError, ArbPrecompileResult};
 pub use nodeinterface::{
     build_fake_tx_bytes, compute_l1_gas_for_estimate, create_nodeinterface_precompile,
     decode_estimate_args, NODE_INTERFACE_ADDRESS,
@@ -67,7 +67,8 @@ use alloy_evm::{
     EvmInternals,
 };
 use arb_context::ArbPrecompileCtx;
-use revm::precompile::{PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult};
+use alloy_primitives::Bytes;
+use revm::precompile::{PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult};
 use std::sync::Arc;
 
 /// RIP-7212 P256VERIFY precompile address (ArbOS v30+).
@@ -91,19 +92,52 @@ const BLS12_381_ADDRESSES: [alloy_primitives::Address; 7] = [
 
 fn create_p256verify_precompile() -> DynPrecompile {
     DynPrecompile::new(PrecompileId::P256Verify, |input: PrecompileInput<'_>| {
-        revm::precompile::secp256r1::p256_verify(input.data, input.gas)
+        Ok(PrecompileOutput::from_eth_result(
+            revm::precompile::secp256r1::p256_verify(input.data, input.gas),
+            input.reservoir,
+        ))
     })
 }
 
 fn create_p256verify_osaka_precompile() -> DynPrecompile {
     DynPrecompile::new(PrecompileId::P256Verify, |input: PrecompileInput<'_>| {
-        revm::precompile::secp256r1::p256_verify_osaka(input.data, input.gas)
+        Ok(PrecompileOutput::from_eth_result(
+            revm::precompile::secp256r1::p256_verify_osaka(input.data, input.gas),
+            input.reservoir,
+        ))
     })
 }
 
 fn create_modexp_osaka_precompile() -> DynPrecompile {
     DynPrecompile::new(PrecompileId::ModExp, |input: PrecompileInput<'_>| {
-        revm::precompile::modexp::osaka_run(input.data, input.gas)
+        Ok(PrecompileOutput::from_eth_result(
+            revm::precompile::modexp::osaka_run(input.data, input.gas),
+            input.reservoir,
+        ))
+    })
+}
+
+/// Successful precompile output; the EIP-8037 reservoir is echoed at the
+/// dispatch boundary by [`echo_reservoir`].
+pub(crate) fn output(gas_used: u64, bytes: Bytes) -> PrecompileOutput {
+    PrecompileOutput::new(gas_used, bytes, 0)
+}
+
+/// Reverted precompile output charging `gas_used`.
+pub(crate) fn revert_output(gas_used: u64, bytes: Bytes) -> PrecompileOutput {
+    PrecompileOutput::revert(gas_used, bytes, 0)
+}
+
+/// Runs a handler and carries the caller's EIP-8037 reservoir through to the
+/// output so frame gas reconstruction stays intact.
+pub(crate) fn echo_reservoir(
+    input: PrecompileInput<'_>,
+    f: impl FnOnce(PrecompileInput<'_>) -> PrecompileResult,
+) -> PrecompileResult {
+    let reservoir = input.reservoir;
+    f(input).map(|mut o| {
+        o.reservoir = reservoir;
+        o
     })
 }
 
@@ -206,20 +240,20 @@ pub fn init_precompile_gas_pure(
     charge_l2_calldata(gas_used, ctx, args_cost);
 }
 
-fn check_precompile_version(ctx: &ArbPrecompileCtx, min_version: u64) -> Option<PrecompileResult> {
+fn check_precompile_version<E>(
+    ctx: &ArbPrecompileCtx,
+    min_version: u64,
+) -> Option<Result<PrecompileOutput, E>> {
     if ctx.block.arbos_version < min_version {
-        Some(Ok(PrecompileOutput::new(0, Default::default())))
+        Some(Ok(crate::output(0, Default::default())))
     } else {
         None
     }
 }
 
 /// Pre-dispatch error: consumes all supplied gas and reverts.
-fn burn_all_revert(gas_limit: u64) -> PrecompileResult {
-    Ok(PrecompileOutput::new_reverted(
-        gas_limit,
-        Default::default(),
-    ))
+fn burn_all_revert<E>(gas_limit: u64) -> Result<PrecompileOutput, E> {
+    Ok(crate::revert_output(gas_limit, Default::default()))
 }
 
 /// Revert with an ABI-encoded Solidity error, charging the result copy as
@@ -229,23 +263,23 @@ pub(crate) fn revert_sol_error(
     ctx: &arb_context::ArbPrecompileCtx,
     payload: Vec<u8>,
     input_gas: u64,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     charge_computation(gas_used, ctx, 3 * (payload.len() as u64).div_ceil(32));
     if *gas_used > input_gas {
-        return Err(ArbPrecompileError::OutOfGas.into());
+        return Err(ArbPrecompileError::OutOfGas);
     }
-    Ok(PrecompileOutput::new_reverted(*gas_used, payload.into()))
+    Ok(crate::revert_output(*gas_used, payload.into()))
 }
 
 /// Reject call value sent to a non-payable method, reverting and consuming all
 /// forwarded gas. `payable` lists the selectors that may receive value. Call
 /// only once the precompile is active for the current ArbOS version.
-pub fn reject_nonpayable_value(
+pub fn reject_nonpayable_value<E>(
     value: alloy_primitives::U256,
     data: &[u8],
     gas_limit: u64,
     payable: &[[u8; 4]],
-) -> Option<PrecompileResult> {
+) -> Option<Result<PrecompileOutput, E>> {
     if value.is_zero() {
         return None;
     }
@@ -263,12 +297,12 @@ fn input_selector(data: &[u8]) -> [u8; 4] {
 
 /// Reject a state-modifying method invoked under STATICCALL, reverting and
 /// consuming all forwarded gas. `write` lists the state-modifying selectors.
-pub fn reject_static_write(
+pub fn reject_static_write<E>(
     is_static: bool,
     data: &[u8],
     gas_limit: u64,
     write: &[[u8; 4]],
-) -> Option<PrecompileResult> {
+) -> Option<Result<PrecompileOutput, E>> {
     if is_static && write.contains(&input_selector(data)) {
         return Some(burn_all_revert(gas_limit));
     }
@@ -293,12 +327,12 @@ pub fn reject_static_unless_read(
 /// Reject a non-`pure` method invoked via DELEGATECALL, reverting and consuming
 /// all forwarded gas. `is_delegate` is true when acting as an address other than
 /// the precompile; `pure` lists the stateless selectors.
-pub fn reject_delegate_nonpure(
+pub fn reject_delegate_nonpure<E>(
     is_delegate: bool,
     data: &[u8],
     gas_limit: u64,
     pure: &[[u8; 4]],
-) -> Option<PrecompileResult> {
+) -> Option<Result<PrecompileOutput, E>> {
     if is_delegate && !pure.contains(&input_selector(data)) {
         return Some(burn_all_revert(gas_limit));
     }
@@ -309,15 +343,15 @@ pub fn reject_delegate_nonpure(
 /// as a revert. Adds the copy cost for the payload to the accumulated gas,
 /// attributed to `Computation` to mirror the reference framework's
 /// `resultCost` burn.
-pub fn sol_error_revert(
+pub fn sol_error_revert<E>(
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
     payload: Vec<u8>,
     gas_limit: u64,
-) -> PrecompileResult {
+) -> Result<PrecompileOutput, E> {
     let result_cost = 3u64 * (payload.len() as u64).div_ceil(32); // CopyGas * words
     charge_computation(gas_used, ctx, result_cost);
-    Ok(PrecompileOutput::new_reverted(
+    Ok(crate::revert_output(
         (*gas_used).min(gas_limit),
         payload.into(),
     ))
@@ -327,28 +361,35 @@ fn gas_check(
     ctx: &ArbPrecompileCtx,
     gas_limit: u64,
     gas_used: u64,
-    result: PrecompileResult,
+    result: crate::ArbPrecompileResult,
 ) -> PrecompileResult {
     if gas_used > gas_limit {
-        return Err(PrecompileError::OutOfGas);
+        return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0));
     }
     match result {
-        Err(PrecompileError::Other(_)) if ctx.block.arbos_version >= 11 => Ok(
-            PrecompileOutput::new_reverted(gas_used.min(gas_limit), Default::default()),
+        Ok(output) => Ok(output),
+        Err(ArbPrecompileError::OutOfGas) => {
+            Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0))
+        }
+        Err(ArbPrecompileError::Revert { .. }) if ctx.block.arbos_version >= 11 => Ok(
+            crate::revert_output(gas_used.min(gas_limit), Default::default()),
         ),
-        other => other,
+        Err(ArbPrecompileError::Revert { .. }) => {
+            Ok(PrecompileOutput::halt(PrecompileHalt::other("revert"), 0))
+        }
+        Err(err @ ArbPrecompileError::Fatal(_)) => err.into_precompile_result(gas_limit),
     }
 }
 
 /// Returns a revert that consumes the full `gas_limit` if the current ArbOS
 /// version is outside `[min_version, max_version]`. `max_version == 0` is
 /// unbounded.
-fn check_method_version(
+fn check_method_version<E>(
     ctx: &ArbPrecompileCtx,
     gas_limit: u64,
     min_version: u64,
     max_version: u64,
-) -> Option<PrecompileResult> {
+) -> Option<Result<PrecompileOutput, E>> {
     let v = ctx.block.arbos_version;
     if v < min_version || (max_version > 0 && v > max_version) {
         Some(burn_all_revert(gas_limit))

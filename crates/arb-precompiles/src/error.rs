@@ -1,8 +1,7 @@
 use alloy_primitives::Bytes;
 use arb_storage_errors::StorageError;
 use core::error::Error;
-use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileResult};
-use std::borrow::Cow;
+use revm::precompile::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult};
 
 /// Errors raised by Arbitrum precompiles.
 ///
@@ -53,9 +52,9 @@ impl ArbPrecompileError {
 
     /// Converts this error into a [`PrecompileResult`], capped by `gas_limit`.
     ///
-    /// `Revert` produces a successful `PrecompileOutput::new_reverted` carrying
-    /// the configured selector and payload. `OutOfGas` and `Fatal` become
-    /// `Err`-variant `PrecompileError`s.
+    /// `Revert` produces a revert-status output carrying the configured
+    /// selector and payload. `OutOfGas` halts consuming all gas; `Fatal`
+    /// becomes an `Err`-variant `PrecompileError` aborting the block.
     pub fn into_precompile_result(self, gas_limit: u64) -> PrecompileResult {
         match self {
             Self::Revert {
@@ -72,15 +71,46 @@ impl ArbPrecompileError {
                     }
                     None => data,
                 };
-                Ok(PrecompileOutput::new_reverted(
+                Ok(PrecompileOutput::revert(
                     gas_used.min(gas_limit),
                     payload,
+                    0,
                 ))
             }
-            other => Err(other.into()),
+            Self::OutOfGas => Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0)),
+            Self::Fatal(source) => Err(PrecompileError::Fatal(source.to_string())),
         }
     }
 }
+
+/// Result type carried by precompile method handlers until the dispatch
+/// boundary converts it into revm's [`PrecompileResult`].
+pub type ArbPrecompileResult = Result<PrecompileOutput, ArbPrecompileError>;
+
+impl ArbPrecompileError {
+    /// Converts an error escaping a handler without boundary post-processing:
+    /// user-visible variants halt the frame consuming all gas; `Fatal` aborts
+    /// the block.
+    pub fn into_halt_result(self) -> PrecompileResult {
+        match self {
+            Self::OutOfGas => Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0)),
+            Self::Revert { .. } => Ok(PrecompileOutput::halt(PrecompileHalt::other("revert"), 0)),
+            Self::Fatal(source) => Err(PrecompileError::Fatal(source.to_string())),
+        }
+    }
+}
+
+/// Unwraps a `Result<_, ArbPrecompileError>` inside a handler returning
+/// [`PrecompileResult`], escaping via [`ArbPrecompileError::into_halt_result`].
+macro_rules! try_or_halt {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(err) => return crate::ArbPrecompileError::from(err).into_halt_result(),
+        }
+    };
+}
+pub(crate) use try_or_halt;
 
 impl From<StorageError> for ArbPrecompileError {
     fn from(err: StorageError) -> Self {
@@ -88,12 +118,3 @@ impl From<StorageError> for ArbPrecompileError {
     }
 }
 
-impl From<ArbPrecompileError> for PrecompileError {
-    fn from(err: ArbPrecompileError) -> Self {
-        match err {
-            ArbPrecompileError::Revert { .. } => PrecompileError::Other(Cow::Borrowed("revert")),
-            ArbPrecompileError::OutOfGas => PrecompileError::OutOfGas,
-            ArbPrecompileError::Fatal(source) => PrecompileError::Fatal(source.to_string()),
-        }
-    }
-}

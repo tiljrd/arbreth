@@ -2,7 +2,7 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolInterface;
 use arb_context::ArbPrecompileCtx;
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::{interfaces::IArbInfo, ArbPrecompileError};
@@ -17,7 +17,7 @@ const COPY_GAS: u64 = 3;
 
 pub fn create_arbinfo_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbinfo"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -57,7 +57,7 @@ fn handle_get_balance(
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
     addr: Address,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let balance = crate::without_access_list_effect(input.internals_mut(), |internals| {
         internals
@@ -67,7 +67,7 @@ fn handle_get_balance(
     })?;
     crate::charge_computation(gas_used, ctx, 700);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         balance.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -78,7 +78,7 @@ fn handle_get_code(
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
     addr: Address,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let code = crate::without_access_list_effect(input.internals_mut(), |internals| {
         internals
@@ -103,7 +103,7 @@ fn handle_get_code(
     let result_words = (out.len() as u64).div_ceil(32);
     crate::charge_storage_read(gas_used, ctx, 2100 + COPY_GAS * code_words);
     crate::charge_computation(gas_used, ctx, COPY_GAS * result_words);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.into(),
     ))

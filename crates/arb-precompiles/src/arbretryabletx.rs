@@ -6,7 +6,7 @@ use arb_storage::ARBOS_STATE_ADDRESS;
 use arbos::retryables::{
     CancelOutcome, LookupOutcome, RetryableError, RETRYABLE_LIFETIME_SECONDS, RETRYABLE_REAP_PRICE,
 };
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::{interfaces::IArbRetryableTx, ArbPrecompileError};
@@ -52,7 +52,7 @@ pub fn canceled_topic() -> B256 {
 
 pub fn create_arbretryabletx_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbretryabletx"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -95,7 +95,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Calls::getLifetime(_) => {
             let lifetime = U256::from(RETRYABLE_LIFETIME_SECONDS);
             crate::charge_computation(&mut gas_used, ctx, COPY_GAS);
-            Ok(PrecompileOutput::new(
+            Ok(crate::output(
                 (gas_used).min(gas_limit),
                 lifetime.to_be_bytes::<32>().to_vec().into(),
             ))
@@ -103,7 +103,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Calls::getCurrentRedeemer(_) => {
             let redeemer = ctx.tx_snapshot().redeemer_word();
             crate::charge_computation(&mut gas_used, ctx, COPY_GAS);
-            Ok(PrecompileOutput::new(
+            Ok(crate::output(
                 (gas_used).min(gas_limit),
                 redeemer.to_be_bytes::<32>().to_vec().into(),
             ))
@@ -155,7 +155,7 @@ fn not_found_revert(
     ctx: &ArbPrecompileCtx,
     gas_used: &mut u64,
     gas_limit: u64,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     if ctx.block.arbos_version < arb_chainspec::arbos_version::ARBOS_VERSION_3 {
         return crate::burn_all_revert(gas_limit);
     }
@@ -168,7 +168,7 @@ fn handle_get_timeout(
     gas_used: &mut u64,
     ticket_id: B256,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let now = current_timestamp(input);
     load_arbos(input)?;
@@ -195,7 +195,7 @@ fn handle_get_timeout(
 
     crate::charge_storage_read(gas_used, ctx, 3 * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         U256::from(effective_timeout)
             .to_be_bytes::<32>()
@@ -209,7 +209,7 @@ fn handle_get_beneficiary(
     ctx: &ArbPrecompileCtx,
     gas_used: &mut u64,
     ticket_id: B256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let now = current_timestamp(input);
     load_arbos(input)?;
@@ -235,7 +235,7 @@ fn handle_get_beneficiary(
 
     crate::charge_storage_read(gas_used, ctx, 2 * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         U256::from_be_slice(beneficiary.as_slice())
             .to_be_bytes::<32>()
@@ -249,7 +249,7 @@ fn handle_redeem(
     ctx: &ArbPrecompileCtx,
     gas_used: &mut u64,
     ticket_id: B256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
     let now = current_timestamp(input);
@@ -367,7 +367,7 @@ fn handle_redeem(
     crate::charge_computation(gas_used, ctx, COPY_GAS);
     let _ = gas_used_so_far;
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         retry_tx_hash.to_vec().into(),
     ))
@@ -378,7 +378,7 @@ fn handle_keepalive(
     ctx: &ArbPrecompileCtx,
     gas_used: &mut u64,
     ticket_id: B256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let now = current_timestamp(input);
     load_arbos(input)?;
@@ -431,7 +431,7 @@ fn handle_keepalive(
     crate::charge_history_growth(gas_used, ctx, event_cost);
     crate::charge_computation(gas_used, ctx, COPY_GAS + RETRYABLE_REAP_PRICE);
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         U256::from(new_timeout).to_be_bytes::<32>().to_vec().into(),
     ))
@@ -442,7 +442,7 @@ fn handle_cancel(
     ctx: &ArbPrecompileCtx,
     gas_used: &mut u64,
     ticket_id: B256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
     let now = current_timestamp(input);
@@ -501,7 +501,7 @@ fn handle_cancel(
     crate::charge_storage_write(gas_used, ctx, 7 * SSTORE_ZERO_GAS + clear_bytes_cost);
     crate::charge_history_growth(gas_used, ctx, event_cost);
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
     ))

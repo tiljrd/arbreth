@@ -4,7 +4,7 @@ use alloy_sol_types::{SolError, SolEvent, SolInterface};
 use arb_context::ArbPrecompileCtx;
 use arb_storage::ARBOS_STATE_ADDRESS;
 use arbos::merkle_accumulator::calc_num_partials;
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::{interfaces::IArbSys, ArbPrecompileError};
@@ -53,7 +53,7 @@ pub fn send_merkle_update_topic() -> B256 {
 
 pub fn create_arbsys_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbsys"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -150,11 +150,11 @@ fn handle_arb_block_number(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let block_num = U256::from(ctx.block.l2_block_number);
     let gas_limit = input.gas;
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         block_num.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -172,7 +172,7 @@ fn handle_arb_block_hash(
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
     requested_u256: U256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let requested: u64 = requested_u256.try_into().unwrap_or(u64::MAX);
     let current = ctx.block.l2_block_number;
     let gas_limit = input.gas;
@@ -190,7 +190,7 @@ fn handle_arb_block_hash(
                 ctx,
                 COPY_GAS * words_for_bytes(revert_data.len() as u64),
             );
-            return Ok(PrecompileOutput::new_reverted(
+            return Ok(crate::revert_output(
                 (*gas_used).min(gas_limit),
                 revert_data.into(),
             ));
@@ -208,7 +208,7 @@ fn handle_arb_block_hash(
     };
 
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         hash.0.to_vec().into(),
     ))
@@ -218,11 +218,11 @@ fn handle_arb_chain_id(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let chain_id = input.internals().chain_id();
     let gas_limit = input.gas;
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         U256::from(chain_id).to_be_bytes::<32>().to_vec().into(),
     ))
@@ -237,7 +237,7 @@ fn handle_arbos_version(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let internals = input.internals_mut();
 
@@ -252,7 +252,7 @@ fn handle_arbos_version(
     let version = arbos_version_from_format(U256::from(arb_state.arbos_version()));
 
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         version.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -262,13 +262,13 @@ fn handle_is_top_level_call(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let depth = ctx.evm_depth();
     let is_top = depth <= 2;
     let val = if is_top { U256::from(1) } else { U256::ZERO };
     let gas_limit = input.gas;
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         val.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -278,7 +278,7 @@ fn handle_was_aliased(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let internals = input.internals_mut();
     internals
@@ -305,7 +305,7 @@ fn handle_was_aliased(
     let aliased = is_top_level && ctx.tx_is_aliased();
     let val = if aliased { U256::from(1) } else { U256::ZERO };
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         val.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -315,7 +315,7 @@ fn handle_caller_without_alias(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let depth = ctx.evm_depth();
     let address = if depth > 1 {
@@ -345,7 +345,7 @@ fn handle_caller_without_alias(
     let mut out = [0u8; 32];
     out[12..32].copy_from_slice(result_addr.as_slice());
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.to_vec().into(),
     ))
@@ -356,7 +356,7 @@ fn handle_map_l1_sender(
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
     l1_addr: Address,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let aliased = apply_l1_alias(l1_addr);
     let gas_limit = input.gas;
     let mut out = [0u8; 32];
@@ -364,7 +364,7 @@ fn handle_map_l1_sender(
     // `mapL1SenderContractAddressToL2Alias` is `pure` — no OpenArbosState read,
     // init already charged argsCost only. Body adds result_cost as Computation.
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.to_vec().into(),
     ))
@@ -374,10 +374,10 @@ fn handle_get_storage_gas(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(32));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         U256::ZERO.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -390,7 +390,7 @@ fn handle_withdraw_eth(
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
     destination: Address,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     if input.is_static {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
@@ -403,7 +403,7 @@ fn handle_send_tx_to_l1(
     ctx: &ArbPrecompileCtx,
     destination: Address,
     calldata: &[u8],
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     if input.is_static {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
@@ -416,7 +416,7 @@ fn do_send_tx_to_l1(
     ctx: &ArbPrecompileCtx,
     destination: Address,
     calldata: &[u8],
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let caller = input.caller;
     let value = input.value;
     let gas_limit = input.gas;
@@ -562,7 +562,7 @@ fn do_send_tx_to_l1(
         COPY_GAS * words_for_bytes(output.len() as u64),
     );
 
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         output.into(),
     ))
@@ -572,7 +572,7 @@ fn handle_send_merkle_tree_state(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     // Only callable by address zero (for state export).
     if input.caller != Address::ZERO {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
@@ -621,7 +621,7 @@ fn handle_send_merkle_tree_state(
     }
 
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(out.len() as u64));
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.into(),
     ))
