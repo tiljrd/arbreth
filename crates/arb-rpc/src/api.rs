@@ -436,8 +436,7 @@ where
         // estimation machinery. The equivalent call has the exact
         // same state transitions as what the auto-redeem runs, so
         // its gas result is the auto-redeem's gas 1:1.
-        let redeem_gas =
-            EstimateCall::estimate_gas_at(
+        let redeem_gas = EstimateCall::estimate_gas_at(
             self,
             equivalent_req,
             at,
@@ -1082,9 +1081,9 @@ where
                     .await
                     .map_err(<Self::Error as FromEthApiError>::from_eth_err)?
                     .ok_or_else(|| {
-                        <Self::Error as FromEthApiError>::from_eth_err(
-                            EthApiError::HeaderNotFound(hash.into()),
-                        )
+                        <Self::Error as FromEthApiError>::from_eth_err(EthApiError::HeaderNotFound(
+                            hash.into(),
+                        ))
                     })?,
             };
 
@@ -1217,8 +1216,7 @@ where
             let calldata_len = input_bytes.as_ref().map(|b| b.len()).unwrap_or(0);
 
             // Run the standard binary search to find compute gas.
-            let compute_gas =
-                EstimateCall::estimate_gas_at(self, request, at, overrides).await?;
+            let compute_gas = EstimateCall::estimate_gas_at(self, request, at, overrides).await?;
 
             // Add L1 posting gas.
             let l1_gas = self.l1_posting_gas(calldata_len, at)?;

@@ -803,7 +803,8 @@ mod tests {
         }
 
         // Commit empty EVM state for StartBlock (internal tx has no EVM changes)
-        let empty_changes: alloy_primitives::map::AddressMap<revm::state::Account> = Default::default();
+        let empty_changes: alloy_primitives::map::AddressMap<revm::state::Account> =
+            Default::default();
         state.commit(empty_changes);
 
         // ================================================================
@@ -848,7 +849,8 @@ mod tests {
         }
 
         // Commit empty EVM state for SubmitRetryable (endTxNow=true, no EVM execution)
-        let empty_changes2: alloy_primitives::map::AddressMap<revm::state::Account> = Default::default();
+        let empty_changes2: alloy_primitives::map::AddressMap<revm::state::Account> =
+            Default::default();
         state.commit(empty_changes2);
 
         // Clear scratch slots (as done in commit_transaction)
@@ -906,7 +908,8 @@ mod tests {
         // many logs — the regression needed ~11 logs across 7+ contracts to
         // reproduce.
         {
-            let mut evm_changes: alloy_primitives::map::AddressMap<revm::state::Account> = Default::default();
+            let mut evm_changes: alloy_primitives::map::AddressMap<revm::state::Account> =
+                Default::default();
 
             // Sender account
             let sender = address!("fd86e9a33fd52e4085fb94d24b759448a621cd36");
@@ -937,11 +940,10 @@ mod tests {
                 // Add some storage changes to simulate real contract execution
                 for j in 0u64..3 {
                     let slot = U256::from(j);
-                    let mut evm_slot =
-                        revm::state::EvmStorageSlot::new(
-                            U256::from(i as u64 * 100 + j),
-                            revm::state::TransactionId::default(),
-                        );
+                    let mut evm_slot = revm::state::EvmStorageSlot::new(
+                        U256::from(i as u64 * 100 + j),
+                        revm::state::TransactionId::default(),
+                    );
                     evm_slot.present_value = U256::from(i as u64 * 100 + j + 1);
                     acct.storage.insert(slot, evm_slot);
                 }
@@ -1211,7 +1213,8 @@ mod tests {
 
         // EVM commit that INCLUDES the ArbOS account (the critical difference!)
         {
-            let mut evm_changes: alloy_primitives::map::AddressMap<revm::state::Account> = Default::default();
+            let mut evm_changes: alloy_primitives::map::AddressMap<revm::state::Account> =
+                Default::default();
 
             // Sender
             let sender = address!("fd86e9a33fd52e4085fb94d24b759448a621cd36");
@@ -1237,7 +1240,10 @@ mod tests {
             // with is_changed=false (just loaded, not modified)
             arbos_acct.storage.insert(
                 scratch_1,
-                revm::state::EvmStorageSlot::new(U256::from(99), revm::state::TransactionId::default()),
+                revm::state::EvmStorageSlot::new(
+                    U256::from(99),
+                    revm::state::TransactionId::default(),
+                ),
             );
             arbos_acct.mark_touch();
             evm_changes.insert(arbos, arbos_acct);
@@ -1476,7 +1482,8 @@ mod tests {
                 // ArbOS not in bundle — add it from cache
                 if let Some(cached_acc) = state.cache.accounts.get(&arbos) {
                     if let Some(ref plain) = cached_acc.account {
-                        let mut storage_changes = revm::database::states::StorageWithOriginalValues::default();
+                        let mut storage_changes =
+                            revm::database::states::StorageWithOriginalValues::default();
                         for (key, value) in &plain.storage {
                             let original =
                                 state.database.storage(arbos, *key).unwrap_or(U256::ZERO);

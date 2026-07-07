@@ -562,10 +562,7 @@ fn do_send_tx_to_l1(
         COPY_GAS * words_for_bytes(output.len() as u64),
     );
 
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        output.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), output.into()))
 }
 
 fn handle_send_merkle_tree_state(
@@ -621,10 +618,7 @@ fn handle_send_merkle_tree_state(
     }
 
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(out.len() as u64));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 // ── Merkle helpers ───────────────────────────────────────────────────

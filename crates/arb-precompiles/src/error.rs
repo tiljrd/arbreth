@@ -117,4 +117,3 @@ impl From<StorageError> for ArbPrecompileError {
         Self::Fatal(Box::new(err))
     }
 }
-

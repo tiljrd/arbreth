@@ -66,8 +66,8 @@ use alloy_evm::{
     precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
     EvmInternals,
 };
-use arb_context::ArbPrecompileCtx;
 use alloy_primitives::Bytes;
+use arb_context::ArbPrecompileCtx;
 use revm::precompile::{PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult};
 use std::sync::Arc;
 

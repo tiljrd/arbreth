@@ -262,10 +262,7 @@ fn handle_compress(
     let result_words = (output.len() as u64).div_ceil(32);
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, result_words * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        output.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), output.into()))
 }
 
 fn handle_decompress(
@@ -314,8 +311,5 @@ fn handle_decompress(
     let body_sloads: u64 = if raw_address { 0 } else { 2 };
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, 2 * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        output.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), output.into()))
 }

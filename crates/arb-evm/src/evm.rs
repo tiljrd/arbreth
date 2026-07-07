@@ -596,7 +596,10 @@ where
         scheme: call_scheme,
         is_static,
         return_memory_offset: 0..0,
-        known_bytecode: (alloy_primitives::B256::ZERO, revm::bytecode::Bytecode::default()),
+        known_bytecode: (
+            alloy_primitives::B256::ZERO,
+            revm::bytecode::Bytecode::default(),
+        ),
         reservoir: 0,
         charged_new_account_state_gas: false,
     };
@@ -949,7 +952,10 @@ where
         scheme: CallScheme::Call,
         is_static: false,
         return_memory_offset: 0..0,
-        known_bytecode: (alloy_primitives::B256::ZERO, revm::bytecode::Bytecode::default()),
+        known_bytecode: (
+            alloy_primitives::B256::ZERO,
+            revm::bytecode::Bytecode::default(),
+        ),
         reservoir: 0,
         charged_new_account_state_gas: false,
     };
@@ -1806,19 +1812,17 @@ where
             // Use known_bytecode from CallInputs if available (already loaded by
             // revm's CALL handler), otherwise load from journal.
             let known = inputs.known_bytecode.1.original_bytes();
-            let bytecode = (!known.is_empty())
-                .then_some(known)
-                .or_else(|| {
-                    context
-                        .journaled_state
-                        .inner
-                        .load_code(
-                            &mut context.journaled_state.database,
-                            inputs.bytecode_address,
-                        )
-                        .ok()
-                        .and_then(|acc| acc.data.info.code.as_ref().map(|c| c.original_bytes()))
-                });
+            let bytecode = (!known.is_empty()).then_some(known).or_else(|| {
+                context
+                    .journaled_state
+                    .inner
+                    .load_code(
+                        &mut context.journaled_state.database,
+                        inputs.bytecode_address,
+                    )
+                    .ok()
+                    .and_then(|acc| acc.data.info.code.as_ref().map(|c| c.original_bytes()))
+            });
 
             if let Some(bytecode) = bytecode {
                 if arb_stylus::is_stylus_runnable(&bytecode) {

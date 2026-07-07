@@ -53,10 +53,9 @@ fn handler(input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> PrecompileResu
     use IArbFunctionTable::ArbFunctionTableCalls;
     let result = match call {
         // Upload: no-op. Cost = OpenArbosState + argsCost (pre-charged).
-        ArbFunctionTableCalls::upload(_) => Ok(crate::output(
-            gas_used.min(gas_limit),
-            vec![].into(),
-        )),
+        ArbFunctionTableCalls::upload(_) => {
+            Ok(crate::output(gas_used.min(gas_limit), vec![].into()))
+        }
         // Size: no-op returning 0. Cost = OpenArbosState + argsCost + 1-word resultCost.
         ArbFunctionTableCalls::size(_) => {
             crate::charge_computation(&mut gas_used, ctx, COPY_GAS);

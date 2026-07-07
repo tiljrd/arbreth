@@ -103,8 +103,5 @@ fn handle_get_code(
     let result_words = (out.len() as u64).div_ceil(32);
     crate::charge_storage_read(gas_used, ctx, 2100 + COPY_GAS * code_words);
     crate::charge_computation(gas_used, ctx, COPY_GAS * result_words);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }

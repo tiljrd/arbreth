@@ -424,10 +424,7 @@ fn handle_scheduled_upgrade(
 
     crate::charge_storage_read(gas_used, ctx, 2 * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, 2 * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_is_chain_owner(
@@ -600,10 +597,7 @@ fn handle_get_all_set_members(
 
     crate::charge_storage_read(gas_used, ctx, (1 + count) * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, (2 + count) * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_rectify_chain_owner(
@@ -650,10 +644,7 @@ fn handle_rectify_chain_owner(
     crate::charge_storage_write(gas_used, ctx, SSTORE_ZERO_GAS + 3 * SSTORE_GAS);
     crate::charge_history_growth(gas_used, ctx, RECTIFY_EVENT_GAS);
     // No return value: result cost covers zero words.
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_is_calldata_price_increase_enabled(

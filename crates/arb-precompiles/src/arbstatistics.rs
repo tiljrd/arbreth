@@ -62,8 +62,5 @@ fn handle_get_stats(
         out.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
     }
     crate::charge_computation(gas_used, ctx, 6 * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(input.gas),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(input.gas), out.into()))
 }

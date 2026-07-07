@@ -682,10 +682,7 @@ fn handle_prices_in_wei(
     let body_sloads = if read_min_base { 2 } else { 1 };
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, 6 * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_gas_accounting_params(
@@ -719,10 +716,7 @@ fn handle_gas_accounting_params(
 
     crate::charge_storage_read(gas_used, ctx, 2 * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, 3 * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_prices_in_arbgas(
@@ -784,10 +778,7 @@ fn handle_prices_in_arbgas(
     let _ = data_len;
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, 3 * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 // ── Constraint getters (ArbOS v50+) ─────────────────────────────────
@@ -845,10 +836,7 @@ fn handle_gas_pricing_constraints(
     let body_sloads = sloads.saturating_sub(1);
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, result_words * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 /// Returns `[]MultiGasConstraint` ABI-encoded.
@@ -949,10 +937,7 @@ fn handle_multi_gas_pricing_constraints(
     let body_sloads = sloads.saturating_sub(1);
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, result_words * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 /// Returns `uint256[]` — current-block base fee per resource kind. Reads BaseFeeWei,
@@ -1000,8 +985,5 @@ fn handle_multi_gas_base_fee(
     let body_sloads = 1 + NUM_RESOURCE_KIND as u64;
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, result_words * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }

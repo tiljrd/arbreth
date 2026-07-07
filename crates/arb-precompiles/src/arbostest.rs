@@ -53,10 +53,7 @@ fn handle_burn_arb_gas(
     amount: U256,
 ) -> crate::ArbPrecompileResult {
     let Ok(to_burn) = u64::try_from(amount) else {
-        return Ok(crate::revert_output(
-            *gas_used,
-            Default::default(),
-        ));
+        return Ok(crate::revert_output(*gas_used, Default::default()));
     };
     // Burning more than the remaining gas consumes all of it yet still
     // succeeds; smaller amounts are charged as computation as usual.

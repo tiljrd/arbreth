@@ -115,10 +115,7 @@ fn handle_become_chain_owner(
         crate::charge_storage_write(gas_used, ctx, 3 * SSTORE_GAS);
     }
 
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_events(
@@ -149,10 +146,7 @@ fn handle_events(
     let mixed_log_gas = LOG_GAS + LOG_TOPIC_GAS * 4 + LOG_DATA_GAS * 64;
     crate::charge_history_growth(gas_used, ctx, basic_log_gas + mixed_log_gas);
     crate::charge_computation(gas_used, ctx, COPY_GAS * result_words);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_events_view(
@@ -183,10 +177,7 @@ fn handle_events_view(
     let mixed_log_gas = LOG_GAS + LOG_TOPIC_GAS * 4 + LOG_DATA_GAS * 64;
     crate::charge_history_growth(gas_used, ctx, basic_log_gas + mixed_log_gas);
 
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_custom_revert(
@@ -255,10 +246,7 @@ fn handle_overwrite_contract_code(
 
     let result_words = (out.len() as u64).div_ceil(32);
     crate::charge_computation(gas_used, ctx, COPY_GAS.saturating_mul(result_words));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn emit_mixed_event(

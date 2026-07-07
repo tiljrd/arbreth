@@ -748,10 +748,7 @@ fn handle_set_network_fee_account(
         .state_params_dirty
         .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::charge_precompile_gas(gas_used, write_cost(addr.is_zero()));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_infra_fee_account(
@@ -778,10 +775,7 @@ fn handle_set_infra_fee_account(
         .state_params_dirty
         .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::charge_precompile_gas(gas_used, write_cost(addr.is_zero()));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_brotli_compression_level(
@@ -813,10 +807,7 @@ fn handle_set_brotli_compression_level(
         Err(e) => return Err(ArbPrecompileError::fatal(e).into()),
     }
     crate::charge_precompile_gas(gas_used, write_cost(level == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_filtered_funds_recipient(
@@ -845,10 +836,7 @@ fn handle_set_filtered_funds_recipient(
         addr,
     );
     crate::charge_precompile_gas(gas_used, write_cost(addr.is_zero()));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_schedule_upgrade(
@@ -876,10 +864,7 @@ fn handle_schedule_upgrade(
         gas_used,
         write_cost(new_version == 0) + write_cost(timestamp == 0),
     );
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 // L2 pricing setters
@@ -906,10 +891,7 @@ fn handle_set_speed_limit(
         .set_speed_limit_per_second(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_l2_base_fee(
@@ -934,10 +916,7 @@ fn handle_set_l2_base_fee(
         .set_base_fee_wei(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val.is_zero()));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_min_l2_base_fee(
@@ -965,10 +944,7 @@ fn handle_set_min_l2_base_fee(
         .state_params_dirty
         .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::charge_precompile_gas(gas_used, write_cost(val.is_zero()));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_max_block_gas_limit(
@@ -993,10 +969,7 @@ fn handle_set_max_block_gas_limit(
         .set_max_per_block_gas_limit(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_max_tx_gas_limit(
@@ -1028,10 +1001,7 @@ fn handle_set_max_tx_gas_limit(
             .map_err(ArbPrecompileError::fatal)?;
     }
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_l2_pricing_inertia(
@@ -1056,10 +1026,7 @@ fn handle_set_l2_pricing_inertia(
         .set_pricing_inertia(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_l2_backlog_tolerance(
@@ -1084,10 +1051,7 @@ fn handle_set_l2_backlog_tolerance(
         .set_backlog_tolerance(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_gas_backlog(
@@ -1112,10 +1076,7 @@ fn handle_set_gas_backlog(
         .set_gas_backlog(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 // L1 pricing setters
@@ -1142,10 +1103,7 @@ fn handle_set_l1_equilibration_units(
         .set_equilibration_units(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val.is_zero()));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_l1_inertia(
@@ -1170,10 +1128,7 @@ fn handle_set_l1_inertia(
         .set_inertia(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_l1_pay_rewards_to(
@@ -1198,10 +1153,7 @@ fn handle_set_l1_pay_rewards_to(
         .set_pay_rewards_to(internals, addr)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(addr.is_zero()));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_l1_per_unit_reward(
@@ -1226,10 +1178,7 @@ fn handle_set_l1_per_unit_reward(
         .set_per_unit_reward(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_l1_price_per_unit(
@@ -1254,10 +1203,7 @@ fn handle_set_l1_price_per_unit(
         .set_price_per_unit(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val.is_zero()));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_parent_gas_floor_per_token(
@@ -1282,10 +1228,7 @@ fn handle_set_parent_gas_floor_per_token(
         .set_parent_gas_floor_per_token(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_per_batch_gas_cost(
@@ -1313,10 +1256,7 @@ fn handle_set_per_batch_gas_cost(
         .set_per_batch_gas_cost(internals, val_i64)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val_i64 == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_amortized_cost_cap_bips(
@@ -1341,10 +1281,7 @@ fn handle_set_amortized_cost_cap_bips(
         .set_amortized_cost_cap_bips(internals, val)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(val == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 // AddressSet handlers
@@ -1412,10 +1349,7 @@ fn handle_get_all_members(
 
     let extra = (1 + count) * SLOAD_GAS + COPY_GAS;
     crate::charge_precompile_gas(gas_used, extra);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_add_chain_owner(
@@ -1449,10 +1383,7 @@ fn handle_add_chain_owner(
         gas_used,
         3 * SLOAD_GAS + 2 * SSTORE_GAS + write_cost(addr.is_zero()),
     );
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_remove_chain_owner(
@@ -1490,10 +1421,7 @@ fn handle_remove_chain_owner(
         emit_address_event(input, IArbOwner::ChainOwnerRemoved::SIGNATURE_HASH, addr);
     }
 
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 /// surplus = pool_balance - recognized_fees; capped by maxWeiToRelease.
@@ -1580,10 +1508,7 @@ fn write_stylus_param(
         .save_params(internals, &params)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, WARM_SLOAD_GAS + SSTORE_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_activation_gas(
@@ -1605,10 +1530,7 @@ fn handle_set_activation_gas(
         .set_activation_gas(internals, value_u64)
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_precompile_gas(gas_used, write_cost(value_u64 == 0));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 // The integer readers reject any word that exceeds the declared Solidity
@@ -1684,10 +1606,7 @@ fn handle_add_cache_manager(
         gas_used,
         3 * SLOAD_GAS + 2 * SSTORE_GAS + write_cost(addr.is_zero()),
     );
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_remove_cache_manager(
@@ -1722,10 +1641,7 @@ fn handle_remove_cache_manager(
         .cache_managers
         .remove(internals, addr, arbos_version, gas_used)
         .map_err(ArbPrecompileError::fatal)?;
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 /// One week in seconds.
@@ -1761,10 +1677,7 @@ fn handle_set_feature_time(
     if timestamp == 0 {
         write_feature_time(arb_state, internals, kind, 0)?;
         crate::charge_precompile_gas(gas_used, write_cost(true));
-        return Ok(crate::output(
-            (*gas_used).min(gas_limit),
-            Vec::new().into(),
-        ));
+        return Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()));
     }
 
     let stored = read_feature_time(arb_state, internals, kind)?;
@@ -1780,10 +1693,7 @@ fn handle_set_feature_time(
 
     write_feature_time(arb_state, internals, kind, timestamp)?;
     crate::charge_precompile_gas(gas_used, SLOAD_GAS + SSTORE_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn emit_address_event(input: &mut PrecompileInput<'_>, topic0: B256, addr: Address) {
@@ -1839,10 +1749,7 @@ fn handle_add_to_set_with_feature_check(
         gas_used,
         4 * SLOAD_GAS + 2 * SSTORE_GAS + write_cost(addr.is_zero()),
     );
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_remove_from_set(
@@ -1882,10 +1789,7 @@ fn handle_remove_from_set(
         emit_address_event(input, topic0, addr);
     }
 
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 // Gas constraint helpers
@@ -1959,10 +1863,7 @@ fn handle_set_gas_pricing_constraints(
 
     // The constraint storage is written through the system burner, so it costs
     // no EVM gas to the transaction, matching `setMultiGasPricingConstraints`.
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 /// ABI: `setMultiGasPricingConstraints(((uint8,uint64)[],uint32,uint64,uint64)[])`.
@@ -2072,10 +1973,7 @@ fn handle_set_multi_gas_pricing_constraints(
 
     // The constraint storage is written through the system burner, so it costs
     // no EVM gas to the transaction.
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn validate_multi_gas_exponents<D, B, C>(
@@ -2198,10 +2096,7 @@ fn handle_set_chain_config(
         + new_full_words * SSTORE_GAS
         + tail_write;
     crate::charge_precompile_gas(gas_used, extra);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_calldata_price_increase(
@@ -2231,10 +2126,7 @@ fn handle_set_calldata_price_increase(
         .store(true, std::sync::atomic::Ordering::Relaxed);
 
     crate::charge_precompile_gas(gas_used, SLOAD_GAS + write_cost(new_features == U256::ZERO));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_set_collect_tips(
@@ -2262,10 +2154,7 @@ fn handle_set_collect_tips(
         .state_params_dirty
         .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::charge_precompile_gas(gas_used, write_cost(!enabled));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 /// Emit the OwnerActs event: OwnerActs(bytes4 method, address owner, bytes data).

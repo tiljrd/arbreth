@@ -3,14 +3,14 @@ use alloy_eips::eip2718::{Encodable2718, Typed2718};
 use alloy_evm::{
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
-        ExecutableTx,
+        CommitChanges, ExecutableTx, GasOutput, StateDB,
     },
     eth::{
         receipt_builder::ReceiptBuilder, spec::EthExecutorSpec, EthBlockExecutionCtx,
         EthBlockExecutor, EthTxResult,
     },
     tx::{FromRecoveredTx, FromTxWithEncoded},
-    Database, Evm, EvmFactory, RecoveredTx,
+    Database, Evm, EvmFactory, RecoveredTx, TransactionEnvMut,
 };
 use alloy_primitives::{keccak256, Address, Log, TxKind, B256, U256};
 use arb_chainspec;
@@ -30,9 +30,6 @@ use arbos::{
     },
     util::{self as arb_util, tx_type_has_poster_costs, BalanceError},
 };
-use alloy_evm::block::{CommitChanges, StateDB};
-use alloy_evm::block::GasOutput;
-use alloy_evm::TransactionEnvMut;
 use revm::{
     context::{result::ExecutionResult, TxEnv},
     database::State,
@@ -1911,7 +1908,8 @@ where
                 match action {
                     RevertedTxAction::PreRecordedRevert { gas_to_consume } => {
                         let overlay = &mut self.state_overlay;
-                        let db: &mut State<InnerDbOf<E>> = self.inner.evm_mut().db_mut().as_state_mut();
+                        let db: &mut State<InnerDbOf<E>> =
+                            self.inner.evm_mut().db_mut().as_state_mut();
                         increment_nonce(db, overlay, sender);
                         self.touched_accounts.insert(sender);
                         // RevertedTxHook fires after intrinsic deduction; the EVM never
@@ -1954,7 +1952,8 @@ where
                     }
                     RevertedTxAction::FilteredTx => {
                         let overlay = &mut self.state_overlay;
-                        let db: &mut State<InnerDbOf<E>> = self.inner.evm_mut().db_mut().as_state_mut();
+                        let db: &mut State<InnerDbOf<E>> =
+                            self.inner.evm_mut().db_mut().as_state_mut();
                         increment_nonce(db, overlay, sender);
                         self.touched_accounts.insert(sender);
                         // Consume all remaining gas.
@@ -2982,7 +2981,8 @@ where
                 if let Some(ref dist) = fee_dist {
                     {
                         let overlay = &mut self.state_overlay;
-                        let db: &mut State<InnerDbOf<E>> = self.inner.evm_mut().db_mut().as_state_mut();
+                        let db: &mut State<InnerDbOf<E>> =
+                            self.inner.evm_mut().db_mut().as_state_mut();
                         apply_fee_distribution(db, overlay, dist, None);
                     }
                     // Skip the network-fee touch when compute cost is 0
@@ -3000,7 +3000,8 @@ where
                     let gas_price_positive_active = pending.gas_price_positive;
 
                     let (refund_done, new_backlog) = {
-                        let db: &mut State<InnerDbOf<E>> = self.inner.evm_mut().db_mut().as_state_mut();
+                        let db: &mut State<InnerDbOf<E>> =
+                            self.inner.evm_mut().db_mut().as_state_mut();
                         let arb_state_post = ArbosState::open(db, SystemBurner::new(None, false))
                             .map_err(BlockExecutionError::other)?;
                         // SAFETY: see `Storage::state_mut()` invariant. Cloned
@@ -3205,7 +3206,6 @@ where
         Ok(gas_used)
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Helpers

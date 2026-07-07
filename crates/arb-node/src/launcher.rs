@@ -445,8 +445,10 @@ impl ArbEngineLauncher {
         }
 
         {
-            use reth_provider::providers::{OverlayBuilder, OverlayStateProviderFactory};
-            use reth_provider::{BlockHashReader, DatabaseProviderFactory, StageCheckpointReader};
+            use reth_provider::{
+                providers::{OverlayBuilder, OverlayStateProviderFactory},
+                BlockHashReader, DatabaseProviderFactory, StageCheckpointReader,
+            };
             use reth_stages_api::StageId;
             use reth_trie_parallel::root::ParallelStateRoot;
 
@@ -473,9 +475,11 @@ impl ArbEngineLauncher {
                         .unwrap_or_default();
                     drop(provider);
 
-                    let builder =
-                        OverlayBuilder::<ArbPrimitives>::new(tip_hash, changeset_cache_for_root.clone())
-                            .with_hashed_state_overlay(Some(Arc::clone(&overlay.state)));
+                    let builder = OverlayBuilder::<ArbPrimitives>::new(
+                        tip_hash,
+                        changeset_cache_for_root.clone(),
+                    )
+                    .with_hashed_state_overlay(Some(Arc::clone(&overlay.state)));
                     let factory = OverlayStateProviderFactory::new(pf.clone(), builder);
                     match ParallelStateRoot::new(factory, prefix_sets.clone(), runtime.clone())
                         .incremental_root_with_updates()

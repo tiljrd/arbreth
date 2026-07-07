@@ -501,10 +501,7 @@ fn handle_cancel(
     crate::charge_storage_write(gas_used, ctx, 7 * SSTORE_ZERO_GAS + clear_bytes_cost);
     crate::charge_history_growth(gas_used, ctx, event_cost);
 
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn compute_backlog_update_cost(

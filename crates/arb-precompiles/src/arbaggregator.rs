@@ -82,10 +82,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             let mut out = [0u8; 32];
             out[12..32].copy_from_slice(BATCH_POSTER_ADDRESS.as_slice());
             crate::charge_computation(&mut gas_used, ctx, COPY_GAS);
-            Ok(crate::output(
-                gas_used.min(gas_limit),
-                out.to_vec().into(),
-            ))
+            Ok(crate::output(gas_used.min(gas_limit), out.to_vec().into()))
         }
         Calls::getTxBaseFee(_) => {
             // 1-arg + 1-result-word: init covered the arg copy; body adds the
@@ -98,10 +95,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         }
         Calls::setTxBaseFee(_) => {
             // 2-arg no-op returning empty: init already charged both arg words.
-            Ok(crate::output(
-                gas_used.min(gas_limit),
-                vec![].into(),
-            ))
+            Ok(crate::output(gas_used.min(gas_limit), vec![].into()))
         }
         Calls::getFeeCollector(c) => {
             handle_get_fee_collector(&mut input, &mut gas_used, c.batchPoster, ctx)
@@ -211,10 +205,7 @@ fn handle_set_fee_collector(
         .map_err(ArbPrecompileError::fatal)?;
     crate::charge_storage_write(gas_used, ctx, write_cost(new_collector.is_zero()));
 
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        vec![].into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), vec![].into()))
 }
 
 fn handle_get_batch_posters(
@@ -248,10 +239,7 @@ fn handle_get_batch_posters(
 
     crate::charge_storage_read(gas_used, ctx, (1 + count) * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, (2 + count) * COPY_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 /// Caller must be a chain owner.
@@ -286,10 +274,7 @@ fn handle_add_batch_poster(
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
 
     if already {
-        return Ok(crate::output(
-            (*gas_used).min(gas_limit),
-            vec![].into(),
-        ));
+        return Ok(crate::output((*gas_used).min(gas_limit), vec![].into()));
     }
 
     bpt.add_poster(internals, new_poster, new_poster)
@@ -302,8 +287,5 @@ fn handle_add_batch_poster(
         ctx,
         SSTORE_ZERO_GAS + addr_write + SSTORE_GAS + addr_write + SSTORE_GAS,
     );
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        vec![].into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), vec![].into()))
 }

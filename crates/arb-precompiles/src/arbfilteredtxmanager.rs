@@ -80,10 +80,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
                 if is_filterer {
                     ctx.restore_precompile_multi_gas(mg_snapshot);
                 }
-                return Ok(crate::revert_output(
-                    final_gas,
-                    Default::default(),
-                ));
+                return Ok(crate::revert_output(final_gas, Default::default()));
             }
         };
 
@@ -117,18 +114,14 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         );
     }
     match inner_result {
-        Ok(_) if gas_used > gas_limit => Ok(crate::revert_output(
-            final_gas,
-            Default::default(),
-        )),
+        Ok(_) if gas_used > gas_limit => Ok(crate::revert_output(final_gas, Default::default())),
         Ok(mut output) => {
             output.gas_used = final_gas;
             Ok(output)
         }
-        Err(ArbPrecompileError::Revert { .. }) => Ok(crate::revert_output(
-            final_gas,
-            Default::default(),
-        )),
+        Err(ArbPrecompileError::Revert { .. }) => {
+            Ok(crate::revert_output(final_gas, Default::default()))
+        }
         Err(e) => e.into_halt_result(),
     }
 }
@@ -245,10 +238,7 @@ fn handle_add_filtered_tx(
     ));
     crate::charge_history_growth(gas_used, ctx, LOG_GAS);
 
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        vec![].into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), vec![].into()))
 }
 
 fn handle_delete_filtered_tx(
@@ -292,8 +282,5 @@ fn handle_delete_filtered_tx(
     ));
     crate::charge_history_growth(gas_used, ctx, LOG_GAS);
 
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        vec![].into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), vec![].into()))
 }

@@ -178,10 +178,7 @@ fn handle_all_cache_managers(
 
     crate::charge_storage_read(gas_used, ctx, sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS * words_for_bytes(out.len() as u64));
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_codehash_is_cached(
@@ -318,10 +315,7 @@ fn set_program_cached(
     }
     if already_cached == cache {
         // The cache state is unchanged; return without any further read.
-        return Ok(crate::output(
-            (*gas_used).min(gas_limit),
-            Vec::new().into(),
-        ));
+        return Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()));
     }
 
     program.cached = cache;
@@ -363,10 +357,7 @@ fn set_program_cached(
     crate::charge_storage_read(gas_used, ctx, prog_init_cost as u64);
     crate::charge_history_growth(gas_used, ctx, EMIT_UPDATE_PROGRAM_CACHE_GAS);
     crate::charge_storage_write(gas_used, ctx, sstore_gas);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn address_to_b256(addr: Address) -> B256 {

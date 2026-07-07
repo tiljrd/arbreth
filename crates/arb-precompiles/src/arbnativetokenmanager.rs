@@ -137,10 +137,7 @@ fn handle_mint(
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, MINT_BURN_GAS);
     crate::charge_history_growth(gas_used, ctx, EVENT_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        vec![].into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), vec![].into()))
 }
 
 fn handle_burn(
@@ -192,8 +189,5 @@ fn handle_burn(
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, MINT_BURN_GAS);
     crate::charge_history_growth(gas_used, ctx, EVENT_GAS);
-    Ok(crate::output(
-        (*gas_used).min(gas_limit),
-        vec![].into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), vec![].into()))
 }
