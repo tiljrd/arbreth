@@ -119,7 +119,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         }
         Calls::minInitGas(_) => {
             let params = load_params(&mut input, &mut gas_used, ctx)?;
-            if ctx.block.arbos_version
+            if ctx.block.arbos_version()
                 < arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS_CHARGING_FIXES
             {
                 let pre_revert_gas = (SLOAD_GAS + WARM_SLOAD_GAS).min(input.gas);
@@ -488,7 +488,7 @@ fn handle_activate_program(
     crate::charge_l2_calldata(&mut gas_used, ctx, args_cost);
     crate::charge_storage_read(&mut gas_used, ctx, SLOAD_GAS);
 
-    if ctx.block.arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_59 {
+    if ctx.block.arbos_version() >= arb_chainspec::arbos_version::ARBOS_VERSION_59 {
         load_arbos(&mut input)?;
         let internals = input.internals_mut();
         let arb_state = ctx
@@ -567,8 +567,8 @@ fn handle_activate_program(
             input.gas,
         );
     }
-    if !arb_stylus::is_stylus_deployable(&code_bytes, ctx.block.arbos_version) {
-        let arbos_v = ctx.block.arbos_version;
+    if !arb_stylus::is_stylus_deployable(&code_bytes, ctx.block.arbos_version()) {
+        let arbos_v = ctx.block.arbos_version();
         if arbos_v < arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS_CONTRACT_LIMIT
             || arb_stylus::is_stylus_fragment(&code_bytes)
         {
@@ -654,7 +654,7 @@ fn handle_activate_program(
         &wasm,
         code_hash.as_ref(),
         params.version,
-        ctx.block.arbos_version,
+        ctx.block.arbos_version(),
         params.page_limit,
         false,
         &mut gas_for_prover,

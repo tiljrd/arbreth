@@ -566,7 +566,7 @@ fn handle_l1_pricing_surplus(
     ctx: &ArbPrecompileCtx,
 ) -> PrecompileResult {
     let gas_limit = input.gas;
-    let arbos_version = ctx.block.arbos_version;
+    let arbos_version = ctx.block.arbos_version();
     load_arbos(input)?;
 
     let internals = input.internals_mut();
@@ -625,7 +625,7 @@ fn handle_prices_in_wei(
 ) -> PrecompileResult {
     let data_len = input.data.len();
     let gas_limit = input.gas;
-    let arbos_version = ctx.block.arbos_version;
+    let arbos_version = ctx.block.arbos_version();
 
     // Reth zeros BlockEnv basefee for eth_call without a gas price;
     // fall back to the L2PricingState slot (written at StartBlock) so
@@ -759,7 +759,7 @@ fn handle_prices_in_arbgas(
         block_basefee
     };
 
-    let arbos_version = ctx.block.arbos_version;
+    let arbos_version = ctx.block.arbos_version();
     let wei_for_l1_calldata = l1_price.saturating_mul(U256::from(TX_DATA_NON_ZERO_GAS));
 
     let gas_for_l1_calldata = if l2_gas_price > U256::ZERO {

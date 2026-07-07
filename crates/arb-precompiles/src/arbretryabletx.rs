@@ -156,7 +156,7 @@ fn not_found_revert(
     gas_used: &mut u64,
     gas_limit: u64,
 ) -> PrecompileResult {
-    if ctx.block.arbos_version < arb_chainspec::arbos_version::ARBOS_VERSION_3 {
+    if ctx.block.arbos_version() < arb_chainspec::arbos_version::ARBOS_VERSION_3 {
         return crate::burn_all_revert(gas_limit);
     }
     let data = IArbRetryableTx::NoTicketWithID {}.abi_encode();
@@ -513,7 +513,7 @@ fn compute_backlog_update_cost(
     gas_used: &mut u64,
 ) -> Result<u64, ArbPrecompileError> {
     use arb_chainspec::arbos_version as arb_ver;
-    let arbos_version = ctx.block.arbos_version;
+    let arbos_version = ctx.block.arbos_version();
     if arbos_version >= arb_ver::ARBOS_VERSION_MULTI_GAS_CONSTRAINTS {
         return Ok(arbos::l2_pricing::MULTI_CONSTRAINT_STATIC_BACKLOG_UPDATE_COST);
     }
@@ -541,7 +541,7 @@ fn compute_actual_backlog_cost(
     gas_to_donate: u64,
 ) -> Result<u64, ArbPrecompileError> {
     use arb_chainspec::arbos_version as arb_ver;
-    let arbos_version = ctx.block.arbos_version;
+    let arbos_version = ctx.block.arbos_version();
     if arbos_version >= arb_ver::ARBOS_VERSION_MULTI_GAS_CONSTRAINTS {
         return Ok(arbos::l2_pricing::MULTI_CONSTRAINT_STATIC_BACKLOG_UPDATE_COST);
     }

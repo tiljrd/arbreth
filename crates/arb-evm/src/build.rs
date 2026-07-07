@@ -410,6 +410,7 @@ fn load_state_params<D: Database>(
 ) {
     let arbos_version = arb_state.arbos_version();
     arb_ctx.arbos_version = arbos_version;
+    precompile_ctx.block.set_arbos_version(arbos_version);
 
     // Reset per-tx scratch on the existing precompile ctx Arc rather than
     // allocating a new one. EVM-side precompile handler closures captured
@@ -2190,9 +2191,10 @@ where
                 TxKind::Call(a) => Some(a),
                 _ => None,
             };
-            // Read the same version snapshot the precompile map was registered
-            // with, so the stash is armed iff ArbWasm is dispatchable.
-            let arbwasm_active = self.precompile_ctx.block.arbos_version
+            // Read the block's live version: the map is (re)registered from
+            // the same source, so the stash is armed iff ArbWasm is
+            // dispatchable for this tx.
+            let arbwasm_active = self.precompile_ctx.block.arbos_version()
                 >= arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS;
             if arbwasm_active && to_addr == Some(arb_precompiles::ARBWASM_ADDRESS) {
                 self.precompile_ctx.set_stylus_call_value(tx_value);

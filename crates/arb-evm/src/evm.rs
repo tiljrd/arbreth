@@ -786,7 +786,7 @@ where
         ..sub_inputs
     };
 
-    if pre_ctx.block.arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS
+    if pre_ctx.block.arbos_version() >= arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS
         && arb_stylus::is_stylus_runnable(&bytecode)
     {
         // SAFETY: see the `Arc::increment_strong_count` site above —
@@ -1010,7 +1010,7 @@ where
             };
         }
         let is_stylus =
-            arb_stylus::is_stylus_component(&deployed_code, pre_ctx.block.arbos_version);
+            arb_stylus::is_stylus_component(&deployed_code, pre_ctx.block.arbos_version());
         if !deployed_code.is_empty() && deployed_code[0] == 0xEF && !is_stylus {
             context.journaled_state.inner.checkpoint_revert(checkpoint);
             return SubCreateResult {
@@ -1370,7 +1370,7 @@ where
     };
 
     let code_hash = alloy_primitives::keccak256(bytecode);
-    let arbos_version = ctx.block.arbos_version;
+    let arbos_version = ctx.block.arbos_version();
     let block_timestamp = ctx.block.block_timestamp;
 
     let params_sto = programs_params_storage();
@@ -1689,7 +1689,7 @@ where
     let value = inputs.value.get();
 
     EvmData {
-        arbos_version: ctx.block.arbos_version,
+        arbos_version: ctx.block.arbos_version(),
         block_basefee: B256::from(basefee.to_be_bytes()),
         chain_id: context.cfg.chain_id(),
         block_coinbase: context.block.beneficiary(),
@@ -1775,11 +1775,20 @@ pub struct ArbPrecompilesMap {
     /// Per-block context shared with the registered precompile closures and
     /// the Stylus dispatch path. Cheap to clone (`Arc`).
     pub ctx: std::sync::Arc<arb_context::ArbPrecompileCtx>,
+    /// ArbOS version the inner map was registered with. A `StartBlock`
+    /// upgrade raises the block's live version mid-block; `set_spec` compares
+    /// against this to rebuild the map for the transactions that follow.
+    registered_version: u64,
 }
 
 impl ArbPrecompilesMap {
     pub fn new(inner: PrecompilesMap, ctx: std::sync::Arc<arb_context::ArbPrecompileCtx>) -> Self {
-        Self { inner, ctx }
+        let registered_version = ctx.block.arbos_version();
+        Self {
+            inner,
+            ctx,
+            registered_version,
+        }
     }
 }
 
@@ -1795,6 +1804,19 @@ where
     type Output = InterpreterResult;
 
     fn set_spec(&mut self, spec: CfgEnv::Spec) -> bool {
+        // A StartBlock-performed upgrade changes the active precompile band
+        // mid-block. Rebuild the map at the live version and return true so
+        // the journal re-collects the warm-preload set for the txs that
+        // follow, mirroring the reference's per-tx active-precompile rules.
+        let live = self.ctx.block.arbos_version();
+        if live != self.registered_version {
+            let base = arb_chainspec::spec_id_by_arbos_version(live);
+            let mut precompiles = PrecompilesMap::from(revm::handler::EthPrecompiles::new(base));
+            register_arb_precompiles(&mut precompiles, self.ctx.clone());
+            self.inner = precompiles;
+            self.registered_version = live;
+            return true;
+        }
         <PrecompilesMap as PrecompileProvider<
             revm::Context<BlockEnv, TxEnv, CfgEnv, DB, revm::Journal<DB>, Chain>,
         >>::set_spec(&mut self.inner, spec)
@@ -1818,7 +1840,7 @@ where
         }
 
         // Check for Stylus WASM programs (active at ArbOS v31+).
-        let arbos_version = self.ctx.block.arbos_version;
+        let arbos_version = self.ctx.block.arbos_version();
         if arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS {
             // Use known_bytecode from CallInputs if available (already loaded by
             // revm's CALL handler), otherwise load from journal.
@@ -1887,6 +1909,9 @@ pub struct ArbEvm<DB: Database, I> {
     inspect: bool,
     create_ctx_stack: Vec<CreateFrameCtx>,
     actor_stack: Vec<Option<Address>>,
+    /// ArbOS version the cfg env was derived from; compared against the
+    /// block's live version before each tx.
+    cfg_arbos_version: u64,
 }
 
 impl<DB, I> ArbEvm<DB, I>
@@ -1894,11 +1919,13 @@ where
     DB: Database,
 {
     pub fn new(inner: InnerRevmEvm<DB, I>, inspect: bool) -> Self {
+        let cfg_arbos_version = inner.precompiles.ctx.block.arbos_version();
         Self {
             inner,
             inspect,
             create_ctx_stack: Vec::new(),
             actor_stack: Vec::new(),
+            cfg_arbos_version,
         }
     }
 
@@ -1916,6 +1943,23 @@ where
 
     pub fn precompiles_mut(&mut self) -> &mut ArbPrecompilesMap {
         &mut self.inner.precompiles
+    }
+
+    /// Aligns the version-dependent cfg knobs with the block's live ArbOS
+    /// version before a transaction runs. A `StartBlock` internal tx can
+    /// perform a scheduled upgrade mid-block; the reference derives each
+    /// tx's rules from the re-stamped header version, so the txs that follow
+    /// must see the post-upgrade spec. The precompile map itself rebuilds in
+    /// `ArbPrecompilesMap::set_spec`.
+    fn refresh_cfg_for_live_arbos_version(&mut self) {
+        let live = self.inner.precompiles.ctx.block.arbos_version();
+        if live == self.cfg_arbos_version {
+            return;
+        }
+        let cfg = &mut self.inner.ctx.cfg;
+        cfg.set_spec_and_mainnet_gas_params(arb_chainspec::spec_id_by_arbos_version(live));
+        cfg.disable_eip3541 = live >= arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS;
+        self.cfg_arbos_version = live;
     }
 }
 
@@ -2030,7 +2074,7 @@ where
             });
         }
 
-        if let Some(bytecode) = is_stylus_call(&frame_input, pre_ctx.block.arbos_version) {
+        if let Some(bytecode) = is_stylus_call(&frame_input, pre_ctx.block.arbos_version()) {
             if let FrameInput::Call(ref inputs) = frame_input.frame_input {
                 if frame_input.depth > revm::primitives::constants::CALL_STACK_LIMIT as usize {
                     let gas = EvmGas::new(inputs.gas_limit);
@@ -2104,7 +2148,7 @@ where
                         .unwrap_or_default();
                     let starts_with_ef = code_bytes.first() == Some(&0xEF);
                     let is_stylus =
-                        arb_stylus::is_stylus_component(&code_bytes, pre_ctx.block.arbos_version);
+                        arb_stylus::is_stylus_component(&code_bytes, pre_ctx.block.arbos_version());
                     if starts_with_ef && !is_stylus {
                         if let Some(create_ctx) = create_ctx {
                             self.inner
@@ -2148,6 +2192,7 @@ where
 
     #[inline]
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
+        self.refresh_cfg_for_live_arbos_version();
         self.inner.ctx.set_tx(tx);
         MainnetHandler::default().run(self)
     }
@@ -2164,6 +2209,7 @@ where
 
     #[inline]
     fn replay(&mut self) -> Result<ResultAndState<HaltReason>, Self::Error> {
+        self.refresh_cfg_for_live_arbos_version();
         MainnetHandler::default().run(self).map(|result| {
             let state = self.finalize();
             ResultAndState::new(result, state)
@@ -2185,6 +2231,7 @@ where
         data: Bytes,
     ) -> Result<Self::ExecutionResult, Self::Error> {
         use revm::handler::system_call::SystemCallTx;
+        self.refresh_cfg_for_live_arbos_version();
         self.inner
             .ctx
             .set_tx(revm::context::TxEnv::new_system_tx_with_caller(
@@ -2253,6 +2300,7 @@ where
     }
 
     fn inspect_one_tx(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
+        self.refresh_cfg_for_live_arbos_version();
         self.inner.ctx.set_tx(tx);
         MainnetHandler::default().inspect_run(self)
     }

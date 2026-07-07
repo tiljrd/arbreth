@@ -285,7 +285,7 @@ fn read_infra_fee_account(
         .block
         .arbos_state(internals)
         .map_err(ArbPrecompileError::fatal)?;
-    let addr = if ctx.block.arbos_version < arb_chainspec::arbos_version::ARBOS_VERSION_6 {
+    let addr = if ctx.block.arbos_version() < arb_chainspec::arbos_version::ARBOS_VERSION_6 {
         arb_state
             .network_fee_account(internals)
             .map_err(ArbPrecompileError::fatal)?
@@ -413,7 +413,7 @@ fn handle_scheduled_upgrade(
     let (mut version, mut timestamp) = arb_state
         .get_scheduled_upgrade(internals)
         .map_err(ArbPrecompileError::fatal)?;
-    if ctx.block.arbos_version >= version {
+    if ctx.block.arbos_version() >= version {
         version = 0;
         timestamp = 0;
     }

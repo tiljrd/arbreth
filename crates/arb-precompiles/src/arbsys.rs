@@ -179,7 +179,7 @@ fn handle_arb_block_hash(
     let gas_limit = input.gas;
 
     if requested >= current || requested + 256 < current {
-        let arbos_version = ctx.block.arbos_version;
+        let arbos_version = ctx.block.arbos_version();
         if arbos_version >= arb_ver::ARBOS_VERSION_11 {
             let revert_data = IArbSys::InvalidBlockNumber {
                 requested: requested_u256,
@@ -325,7 +325,7 @@ fn handle_caller_without_alias(
         Address::ZERO
     };
 
-    let arbos_version = ctx.block.arbos_version;
+    let arbos_version = ctx.block.arbos_version();
     let is_top_level = if arbos_version < arb_ver::ARBOS_VERSION_IS_TOP_LEVEL_ORIGIN_CHECK {
         depth == 2
     } else if depth <= 2 {
