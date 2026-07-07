@@ -217,9 +217,9 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
 
         // L2 pricing setters
         Calls::setSpeedLimit(_) => match data.get(4..36) {
-            None => Err(ArbPrecompileError::empty_revert(gas_used).into()),
+            None => Err(ArbPrecompileError::empty_revert(gas_used)),
             Some(bytes) if U256::from_be_slice(bytes).is_zero() => {
-                Err(ArbPrecompileError::empty_revert(gas_used).into())
+                Err(ArbPrecompileError::empty_revert(gas_used))
             }
             Some(_) => handle_set_speed_limit(&mut input, &mut gas_used, ctx),
         },
@@ -233,9 +233,9 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         }
         Calls::setMaxTxGasLimit(_) => handle_set_max_tx_gas_limit(&mut input, &mut gas_used, ctx),
         Calls::setL2GasPricingInertia(_) => match data.get(4..36) {
-            None => Err(ArbPrecompileError::empty_revert(gas_used).into()),
+            None => Err(ArbPrecompileError::empty_revert(gas_used)),
             Some(bytes) if U256::from_be_slice(bytes).is_zero() => {
-                Err(ArbPrecompileError::empty_revert(gas_used).into())
+                Err(ArbPrecompileError::empty_revert(gas_used))
             }
             Some(_) => handle_set_l2_pricing_inertia(&mut input, &mut gas_used, ctx),
         },
@@ -288,9 +288,9 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
                 return r;
             }
             match read_u32_param(gas_used, data) {
-                Err(e) => Err(e.into()),
+                Err(e) => Err(e),
                 Ok(val) if val == 0 || val > 0xFF_FFFF => {
-                    Err(ArbPrecompileError::empty_revert(gas_used).into())
+                    Err(ArbPrecompileError::empty_revert(gas_used))
                 }
                 Ok(val) => {
                     write_stylus_param(&mut input, &mut gas_used, |p| p.ink_price = val, ctx)
@@ -802,9 +802,9 @@ fn handle_set_brotli_compression_level(
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         Err(arbos::arbos_state::ArbosStateError::InvalidBrotliCompressionLevel) => {
-            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+            return Err(ArbPrecompileError::empty_revert(*gas_used));
         }
-        Err(e) => return Err(ArbPrecompileError::fatal(e).into()),
+        Err(e) => return Err(ArbPrecompileError::fatal(e)),
     }
     crate::charge_precompile_gas(gas_used, write_cost(level == 0));
     Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
@@ -1410,7 +1410,7 @@ fn handle_remove_chain_owner(
         .is_member(internals, addr)
         .map_err(ArbPrecompileError::fatal)?
     {
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
     crate::charge_precompile_gas(gas_used, SLOAD_GAS);
     arb_state
@@ -1633,7 +1633,7 @@ fn handle_remove_cache_manager(
         .is_member(internals, addr)
         .map_err(ArbPrecompileError::fatal)?
     {
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
     crate::charge_precompile_gas(gas_used, SLOAD_GAS);
     arb_state
@@ -1685,10 +1685,10 @@ fn handle_set_feature_time(
     if (stored > now + FEATURE_ENABLE_DELAY || stored == 0)
         && timestamp < now + FEATURE_ENABLE_DELAY
     {
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
     if stored > now && stored <= now + FEATURE_ENABLE_DELAY && timestamp < stored {
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
 
     write_feature_time(arb_state, internals, kind, timestamp)?;
@@ -1733,7 +1733,7 @@ fn handle_add_to_set_with_feature_check(
 
     let enabled_time = read_feature_time(arb_state, internals, feature_kind)?;
     if enabled_time == 0 || enabled_time > now {
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
 
     address_set(arb_state, set_kind)
@@ -1779,7 +1779,7 @@ fn handle_remove_from_set(
         .is_member(internals, addr)
         .map_err(ArbPrecompileError::fatal)?
     {
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
     crate::charge_precompile_gas(gas_used, SLOAD_GAS);
     set.remove(internals, addr, arbos_version, gas_used)
@@ -1836,7 +1836,7 @@ fn handle_set_gas_pricing_constraints(
         .contains(&arbos_version)
         && (count as usize) > GAS_CONSTRAINTS_MAX_NUM
     {
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
 
     for i in 0..count {
@@ -1852,7 +1852,7 @@ fn handle_set_gas_pricing_constraints(
             .unwrap_or(0);
 
         if target == 0 || window == 0 {
-            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+            return Err(ArbPrecompileError::empty_revert(*gas_used));
         }
 
         arb_state
@@ -1931,7 +1931,7 @@ fn handle_set_multi_gas_pricing_constraints(
             .unwrap_or(0);
 
         if target == 0 || window == 0 {
-            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+            return Err(ArbPrecompileError::empty_revert(*gas_used));
         }
         let resources_start = struct_start + resources_offset;
 
@@ -1958,7 +1958,7 @@ fn handle_set_multi_gas_pricing_constraints(
                 .unwrap_or(0);
 
             if !arb_primitives::multigas::ResourceKind::is_valid_id(resource) {
-                return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+                return Err(ArbPrecompileError::empty_revert(*gas_used));
             }
             weights[resource as usize] = weight;
         }

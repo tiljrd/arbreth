@@ -710,7 +710,7 @@ fn handle_activate_program(
         Ok(info) => info,
         Err(_) => {
             crate::charge_computation(&mut gas_used, ctx, gas_available);
-            return Err(ArbPrecompileError::empty_revert(gas_used).into());
+            return Err(ArbPrecompileError::empty_revert(gas_used));
         }
     };
 
@@ -864,7 +864,7 @@ fn handle_activate_program(
     crate::charge_computation(&mut gas_used, ctx, return_gas);
 
     if gas_used > input.gas {
-        return Err(ArbPrecompileError::OutOfGas.into());
+        return Err(ArbPrecompileError::OutOfGas);
     }
     Ok(crate::output(gas_used, return_data.into()))
 }
@@ -1030,7 +1030,7 @@ fn handle_codehash_keepalive(
     ));
 
     if gas_used > input.gas {
-        return Err(ArbPrecompileError::OutOfGas.into());
+        return Err(ArbPrecompileError::OutOfGas);
     }
     Ok(crate::output(gas_used, Vec::new().into()))
 }

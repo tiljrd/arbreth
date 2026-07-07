@@ -195,7 +195,7 @@ fn handle_arb_block_hash(
                 revert_data.into(),
             ));
         }
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
 
     // The window is populated before execution, so an in-range miss is an
@@ -203,7 +203,10 @@ fn handle_arb_block_hash(
     let hash = match ctx.block.cached_l2_block_hash(requested) {
         Some(hash) => hash,
         None => {
-            return Err(ArbPrecompileError::fatal(MissingL2BlockHash { requested, current }).into())
+            return Err(ArbPrecompileError::fatal(MissingL2BlockHash {
+                requested,
+                current,
+            }))
         }
     };
 
@@ -392,7 +395,7 @@ fn handle_withdraw_eth(
     destination: Address,
 ) -> crate::ArbPrecompileResult {
     if input.is_static {
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
     do_send_tx_to_l1(input, gas_used, ctx, destination, &[])
 }
@@ -405,7 +408,7 @@ fn handle_send_tx_to_l1(
     calldata: &[u8],
 ) -> crate::ArbPrecompileResult {
     if input.is_static {
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
     do_send_tx_to_l1(input, gas_used, ctx, destination, calldata)
 }
@@ -446,7 +449,7 @@ fn do_send_tx_to_l1(
             .size(internals)
             .map_err(ArbPrecompileError::fatal)?;
         if num_owners != 0 {
-            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+            return Err(ArbPrecompileError::empty_revert(*gas_used));
         }
     }
 
@@ -572,7 +575,7 @@ fn handle_send_merkle_tree_state(
 ) -> crate::ArbPrecompileResult {
     // Only callable by address zero (for state export).
     if input.caller != Address::ZERO {
-        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        return Err(ArbPrecompileError::empty_revert(*gas_used));
     }
     let gas_limit = input.gas;
     let internals = input.internals_mut();
