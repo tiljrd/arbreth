@@ -122,6 +122,7 @@ where
             difficulty: header.difficulty(),
             prevrandao: Some(prevrandao),
             gas_limit: header.gas_limit(),
+            slot_num: 0,
             basefee: header.base_fee_per_gas().unwrap_or_default(),
             blob_excess_gas_and_price: if spec.is_enabled_in(SpecId::CANCUN) {
                 Some(revm::context_interface::block::BlobExcessGasAndPrice {
@@ -165,6 +166,7 @@ where
             difficulty: U256::from(1),
             prevrandao: Some(prevrandao),
             gas_limit: attributes.gas_limit,
+            slot_num: 0,
             basefee: parent.base_fee_per_gas().unwrap_or_default(),
             blob_excess_gas_and_price: if spec.is_enabled_in(SpecId::CANCUN) {
                 Some(revm::context_interface::block::BlobExcessGasAndPrice {
@@ -194,6 +196,7 @@ where
             parent_beacon_block_root: block.header().parent_beacon_block_root,
             ommers: &[],
             withdrawals: None,
+            slot_number: None,
             extra_data: extra.into(),
         })
     }
@@ -209,6 +212,7 @@ where
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             ommers: &[],
             withdrawals: None,
+            slot_number: None,
             extra_data: attributes.extra_data,
         })
     }
@@ -246,6 +250,7 @@ where
             difficulty: U256::from(1),
             prevrandao: Some(prevrandao),
             gas_limit: payload.payload.gas_limit(),
+            slot_num: 0,
             basefee: payload.payload.saturated_base_fee_per_gas(),
             blob_excess_gas_and_price: if spec.is_enabled_in(SpecId::CANCUN) {
                 Some(revm::context_interface::block::BlobExcessGasAndPrice {
@@ -270,6 +275,7 @@ where
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             ommers: &[],
             withdrawals: None,
+            slot_number: None,
             extra_data: payload.payload.as_v1().extra_data.clone(),
         })
     }

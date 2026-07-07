@@ -113,6 +113,8 @@ where
 
         let header = Header {
             parent_hash: ctx.parent_hash,
+            block_access_list_hash: None,
+            slot_number: None,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
             beneficiary: evm_env.block_env.beneficiary(),
             state_root,
