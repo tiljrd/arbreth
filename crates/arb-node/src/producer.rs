@@ -191,7 +191,7 @@ struct CachedOverlay {
 
 struct CachedPrestate {
     parent_hash: B256,
-    contracts: Arc<alloy_primitives::map::HashMap<B256, revm::bytecode::Bytecode>>,
+    contracts: Arc<alloy_primitives::map::B256Map<revm::bytecode::Bytecode>>,
 }
 
 impl<Provider> ArbBlockProducer<Provider>
@@ -272,14 +272,14 @@ where
         &self,
         parent_hash: B256,
         head_state: Option<&reth_chain_state::BlockState<ArbPrimitives>>,
-    ) -> Arc<alloy_primitives::map::HashMap<B256, revm::bytecode::Bytecode>> {
+    ) -> Arc<alloy_primitives::map::B256Map<revm::bytecode::Bytecode>> {
         let mut cache = self.cached_prestate.lock();
         if let Some(c) = cache.as_ref() {
             if c.parent_hash == parent_hash {
                 return c.contracts.clone();
             }
         }
-        let mut contracts: alloy_primitives::map::HashMap<B256, revm::bytecode::Bytecode> =
+        let mut contracts: alloy_primitives::map::B256Map<revm::bytecode::Bytecode> =
             Default::default();
         if let Some(head_state) = head_state {
             for block_state in head_state.chain() {
@@ -520,6 +520,8 @@ where
         // Build a provisional header for the EVM config.
         let provisional_header = Header {
             parent_hash: parent_header.hash(),
+            block_access_list_hash: None,
+            slot_number: None,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
             beneficiary: input.sender,
             state_root: B256::ZERO, // placeholder
@@ -567,7 +569,6 @@ where
             .with_database(StateProviderDatabase::new(state_provider.as_ref()))
             .with_bundle_prestate(prestate)
             .with_bundle_update()
-            .without_state_clear()
             .build();
 
         let chain_id = self.chain_spec.chain().id();
@@ -664,6 +665,7 @@ where
             parent_beacon_block_root: None,
             ommers: &[],
             withdrawals: None,
+            slot_number: None,
             extra_data: exec_extra.into(),
         };
 
@@ -1105,6 +1107,8 @@ where
 
         let header = Header {
             parent_hash: parent_header.hash(),
+            block_access_list_hash: None,
+            slot_number: None,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
             beneficiary: input.sender,
             state_root,
@@ -1162,7 +1166,6 @@ where
             let computed = ComputedTrieData {
                 hashed_state: Arc::new(hashed_state.into_sorted()),
                 trie_updates: Arc::new(trie_updates.into_sorted()),
-                anchored_trie_input: None,
             };
             let executed = ExecutedBlock::new(recovered, exec_output, computed);
 
@@ -1496,13 +1499,11 @@ where
         .try_into_recovered()
         .map_err(|e| BlockProducerError::Execution(format!("{label} recovery: {e}")))?;
 
-    let result = executor
-        .execute_transaction_without_commit(recovered)
-        .map_err(|e| BlockProducerError::Execution(format!("{label} execution: {e}")))?;
-
     executor
-        .commit_transaction(result)
-        .map_err(|e| BlockProducerError::Execution(format!("{label} commit: {e}")))?;
+        .execute_transaction_with_commit_condition(recovered, |_| {
+            alloy_evm::block::CommitChanges::Yes
+        })
+        .map_err(|e| BlockProducerError::Execution(format!("{label} execution: {e}")))?;
 
     Ok(())
 }
@@ -1638,8 +1639,7 @@ fn augment_bundle_from_cache(
                 }
             };
 
-            let mut storage_changes: alloy_primitives::map::HashMap<U256, StorageSlot> =
-                alloy_primitives::map::HashMap::default();
+            let mut storage_changes = revm_database::states::StorageWithOriginalValues::default();
             for (key, value) in &current_storage {
                 let original_value = state_provider
                     .storage(*addr, B256::from(*key))

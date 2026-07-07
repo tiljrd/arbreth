@@ -958,6 +958,14 @@ where
 {
 }
 
+impl<N, Rpc> reth_rpc_eth_api::helpers::GetBlockAccessList for ArbEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    EthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError, Evm = N::Evm>,
+{
+}
+
 impl<N, Rpc> LoadPendingBlock for ArbEthApi<N, Rpc>
 where
     N: RpcNodeCore,
