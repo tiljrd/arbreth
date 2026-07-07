@@ -79,6 +79,8 @@ fn start_block_tx(l1_block: u64, l2_block: u64) -> ArbTransactionSigned {
 #[allow(clippy::too_many_arguments)]
 fn block_for(l2_block: u64, l1_block: u64, parent_hash: B256) -> Block<ArbTransactionSigned> {
     let header = Header {
+        block_access_list_hash: None,
+        slot_number: None,
         parent_hash,
         ommers_hash: alloy_consensus::constants::EMPTY_OMMER_ROOT_HASH,
         beneficiary: SEQUENCER,

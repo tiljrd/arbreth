@@ -286,6 +286,7 @@ fn v60_user_call_matches_canonical_post_state() {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: vec![0u8; 32].into(),
     };
     let mut executor = cfg
@@ -341,7 +342,7 @@ fn v60_user_call_matches_canonical_post_state() {
         result.result.result,
     );
     assert_eq!(
-        result.result.result.gas_used(),
+        result.result.result.tx_gas_used(),
         CANON_GAS_USED,
         "gas_used must match canonical",
     );
