@@ -21,6 +21,7 @@ ignore = [
     "RUSTSEC-2026-0067", # tar unpack_in symlink - transitive via reth
     "RUSTSEC-2026-0068", # tar PAX size headers - transitive via reth
     "RUSTSEC-2026-0105", # core2 unmaintained - transitive via reth/discv5/multihash
+    "RUSTSEC-2022-0104", # structopt maintenance mode - transitive via nitro prover
     "RUSTSEC-2026-0118", # hickory-dns NSEC3 - transitive via reth/discv5
     "RUSTSEC-2026-0119", # hickory-dns name compression - transitive via reth/discv5
 ]
@@ -167,4 +168,5 @@ allow-git = [
     "https://github.com/paradigmxyz/reth",
     "https://github.com/OffchainLabs/nitro",
     "https://github.com/OffchainLabs/wasmer",
+    "https://github.com/sigp/discv5",
 ]
