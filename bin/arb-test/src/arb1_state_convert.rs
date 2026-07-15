@@ -109,7 +109,7 @@ pub fn run(args: Arb1StateConvertArgs) -> Result<()> {
             None => skipped += 1,
         }
         processed += 1;
-        if args.progress_every > 0 && processed % args.progress_every == 0 {
+        if args.progress_every > 0 && processed.is_multiple_of(args.progress_every) {
             eprintln!("processed {processed} (wrote {total}, skipped empty {skipped})");
         }
     }

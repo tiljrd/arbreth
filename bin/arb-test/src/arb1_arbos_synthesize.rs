@@ -3,10 +3,9 @@
 //! and expired-retryable beneficiary credits — as JSONL lines to concatenate
 //! with the `arb1-state-convert` output before `arb-reth init-state`.
 //!
-//! Mirrors Nitro's `arbos/arbosState/initialize.go::InitializeArbosInDatabase`
-//! by driving our `bootstrap` + `chain_owners.add` + `address_table.register`
-//! + `initialize_retryables` against an in-memory `State<EmptyDb>`, then
-//! reading the resulting `0xA4B05Fff...` storage out of the cache.
+//! Drives the production `bootstrap`, `chain_owners`, `address_table`, and
+//! `initialize_retryables` code against an in-memory `State<EmptyDb>`, then
+//! reads the resulting `0xA4B05Fff...` storage out of the cache.
 
 use std::{
     collections::HashSet,

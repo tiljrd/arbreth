@@ -104,7 +104,7 @@ pub fn initialize_arbos_state<D: Database>(
     )
     .map_err(|e| GenesisError::InitSubsystem {
         subsystem: "bootstrap",
-        source: e.into(),
+        source: e,
     })?;
 
     // Optional ArbOS features the init message may enable.

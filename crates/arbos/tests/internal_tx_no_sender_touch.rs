@@ -23,7 +23,7 @@ impl TouchRecorder {
         self.addrs.push(addr);
     }
     fn contains(&self, addr: Address) -> bool {
-        self.addrs.iter().any(|a| *a == addr)
+        self.addrs.contains(&addr)
     }
 }
 

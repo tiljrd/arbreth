@@ -7,6 +7,7 @@
 //!   - ArbSys.sendTxToL1 from an EOA (merkle-accumulator append + L2ToL1Tx log) repeated so the
 //!     accumulator carries through 1 -> 2 -> 3 leaves;
 //!   - ArbSys.withdrawEth (value burn -> total-supply decrease) + send.
+//!
 //! Compared at the arb1-era versions v6, v9 plus v60 (the sendTxToL1 return
 //! value is v4-gated and tips are collected at v9).
 //!
@@ -97,7 +98,7 @@ fn send_tx_to_l1_calldata(dest: Address, data: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&word_u64(0x40)); // offset to bytes
     out.extend_from_slice(&word_u64(data.len() as u64));
     let mut padded = data.to_vec();
-    while padded.len() % 32 != 0 {
+    while !padded.len().is_multiple_of(32) {
         padded.push(0);
     }
     out.extend_from_slice(&padded);
