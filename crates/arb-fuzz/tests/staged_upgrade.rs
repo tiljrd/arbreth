@@ -12,8 +12,10 @@
 //!     cargo test -p arb-fuzz --test staged_upgrade --release \
 //!     -- --ignored --nocapture
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
 
 /// Each upgrade-ladder case spawns its own Nitro + arbreth pair; serialize so
 /// concurrent `cargo test` threads don't contend on Docker / ports.
@@ -1256,12 +1258,23 @@ fn staged_upgrade_v6_through_v11() {
             report.log_diffs.len(),
         );
         for d in &report.block_diffs {
-            eprintln!("  block#{} field={} left={} right={}", d.number, d.field, d.left, d.right);
+            eprintln!(
+                "  block#{} field={} left={} right={}",
+                d.number, d.field, d.left, d.right
+            );
         }
-        let latest = rig.dual.left.block(BlockId::Latest).expect("left latest").number;
+        let latest = rig
+            .dual
+            .left
+            .block(BlockId::Latest)
+            .expect("left latest")
+            .number;
         diff_arbos_state_at(&rig, latest);
     }
-    assert!(report.is_clean(), "arb1 v6->v11 upgrade ladder must produce no diffs");
+    assert!(
+        report.is_clean(),
+        "arb1 v6->v11 upgrade ladder must produce no diffs"
+    );
 
     // The ladder must actually have advanced both nodes to v11 — otherwise a
     // clean run only proves both refused to upgrade.

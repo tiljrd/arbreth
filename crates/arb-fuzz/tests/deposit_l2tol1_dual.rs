@@ -4,8 +4,8 @@
 //! deposit, value burning + the L2->L1 send-merkle accumulator on withdrawal)
 //! that the EVM-opcode fuzzers don't touch and that is core arb1 traffic:
 //!   - deposits to a fresh EOA, a deployed contract, and a zero-value touch;
-//!   - ArbSys.sendTxToL1 from an EOA (merkle-accumulator append + L2ToL1Tx log)
-//!     repeated so the accumulator carries through 1 -> 2 -> 3 leaves;
+//!   - ArbSys.sendTxToL1 from an EOA (merkle-accumulator append + L2ToL1Tx log) repeated so the
+//!     accumulator carries through 1 -> 2 -> 3 leaves;
 //!   - ArbSys.withdrawEth (value burn -> total-supply decrease) + send.
 //! Compared at the arb1-era versions v6, v9 plus v60 (the sendTxToL1 return
 //! value is v4-gated and tips are collected at v9).

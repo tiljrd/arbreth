@@ -321,17 +321,19 @@ impl TxProcessor {
             compute_cost = compute_cost.saturating_sub(infra_fee_amount);
         }
 
-        let poster_fee_destination = if params.arbos_version < arb_ver::ARBOS_VERSION_POSTER_FUNDS_TO_POOL {
-            params.coinbase
-        } else {
-            l1_pricing::L1_PRICER_FUNDS_POOL_ADDRESS
-        };
+        let poster_fee_destination =
+            if params.arbos_version < arb_ver::ARBOS_VERSION_POSTER_FUNDS_TO_POOL {
+                params.coinbase
+            } else {
+                l1_pricing::L1_PRICER_FUNDS_POOL_ADDRESS
+            };
 
-        let l1_fees_to_add = if params.arbos_version >= arb_ver::ARBOS_VERSION_L1_PRICING_FROM_POOL_SLOT {
-            poster_fee
-        } else {
-            U256::ZERO
-        };
+        let l1_fees_to_add =
+            if params.arbos_version >= arb_ver::ARBOS_VERSION_L1_PRICING_FROM_POOL_SLOT {
+                poster_fee
+            } else {
+                U256::ZERO
+            };
 
         let compute_gas_for_backlog = if !params.gas_price.is_zero() {
             if gas_used > self.poster_gas {

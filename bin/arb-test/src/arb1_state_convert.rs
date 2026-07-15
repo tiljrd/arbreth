@@ -40,7 +40,10 @@ pub struct Arb1StateConvertArgs {
     /// `init-state` can gate the dump root against the chainspec genesis root.
     /// Default = block 22,207,817's stateRoot (the actual Nitro migration
     /// genesis); block 22,207,818's stateRoot 0xd764f1… is post-init-tx.
-    #[arg(long, default_value = "0x7f2bfc4481d02bfcfc606ebb949384ef78d03a0f30a2dc9cccd652eb80926ae1")]
+    #[arg(
+        long,
+        default_value = "0x7f2bfc4481d02bfcfc606ebb949384ef78d03a0f30a2dc9cccd652eb80926ae1"
+    )]
     pub state_root: String,
 
     /// Progress log cadence (number of input lines per status line).
@@ -112,8 +115,10 @@ pub fn run(args: Arb1StateConvertArgs) -> Result<()> {
     }
 
     w.flush()?;
-    eprintln!("done: wrote {total} accounts to {} (skipped {skipped} empty out of {processed} read)",
-        args.out.display());
+    eprintln!(
+        "done: wrote {total} accounts to {} (skipped {skipped} empty out of {processed} read)",
+        args.out.display()
+    );
     Ok(())
 }
 
@@ -135,7 +140,10 @@ fn classic_account_to_jsonl(acct: &ClassicAccount) -> Result<Option<String>> {
     }
     if let Some(ci) = &acct.contract_info {
         if !ci.code.is_empty() {
-            entry.insert("code".into(), Value::String(format!("0x{}", hex::encode(&ci.code))));
+            entry.insert(
+                "code".into(),
+                Value::String(format!("0x{}", hex::encode(&ci.code))),
+            );
         }
         if let Some(storage) = &ci.contract_storage {
             let mut out = Map::new();

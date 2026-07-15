@@ -320,7 +320,10 @@ fn emit_account<W: Write>(
     }
     if let Some(c) = code {
         if !c.is_empty() {
-            entry.insert("code".into(), Value::String(format!("0x{}", hex::encode(c))));
+            entry.insert(
+                "code".into(),
+                Value::String(format!("0x{}", hex::encode(c))),
+            );
         }
     }
     if !storage.is_empty() {
@@ -385,15 +388,18 @@ fn read_retryables(path: &PathBuf) -> Result<Vec<InitRetryableData>> {
         }
         let r: RetryableJson = serde_json::from_str(s)
             .with_context(|| format!("line {}: parse retryable", lineno + 1))?;
-        let to_addr: Address = r
-            .to
-            .parse()
-            .with_context(|| format!("line {}: parse To", lineno + 1))?;
+        let to_addr: Address =
+            r.to.parse()
+                .with_context(|| format!("line {}: parse To", lineno + 1))?;
         out.push(InitRetryableData {
             id: r.id.parse().context("Id")?,
             timeout: r.timeout,
             from: r.from.parse().context("From")?,
-            to: if to_addr == Address::ZERO { None } else { Some(to_addr) },
+            to: if to_addr == Address::ZERO {
+                None
+            } else {
+                Some(to_addr)
+            },
             callvalue: parse_uint(&r.callvalue).context("Callvalue")?,
             beneficiary: r.beneficiary.parse().context("Beneficiary")?,
             calldata: r.calldata,

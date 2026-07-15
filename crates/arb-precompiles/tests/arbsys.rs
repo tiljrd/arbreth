@@ -204,14 +204,14 @@ fn caller_without_alias_v6_unaliases_caller_when_top_level() {
         // topLevel=true; `address` returned is itself `caller_at_depth(depth-1)`.
         .caller_stack(vec![origin, origin, depth_minus_one])
         .arbos_state()
-        .call(
-            arbsys,
-            &calldata("myCallersAddressWithoutAliasing()", &[]),
-        );
+        .call(arbsys, &calldata("myCallersAddressWithoutAliasing()", &[]));
     // We push `origin` at index 1 (=caller_at_depth(2)) which is what gets
     // unaliased and returned. inverse_remap_l1_address(origin) yields the
     // pre-aliased L1 address.
-    assert_eq!(decode_address(run.output()), inverse_remap_l1_address(origin));
+    assert_eq!(
+        decode_address(run.output()),
+        inverse_remap_l1_address(origin)
+    );
 }
 
 #[test]
@@ -228,10 +228,7 @@ fn caller_without_alias_v6_returns_caller_unchanged_when_not_top_level() {
         .caller(origin)
         .caller_stack(vec![origin, mid, inner])
         .arbos_state()
-        .call(
-            arbsys,
-            &calldata("myCallersAddressWithoutAliasing()", &[]),
-        );
+        .call(arbsys, &calldata("myCallersAddressWithoutAliasing()", &[]));
     // depth-1=2 → caller_at_depth(2)=mid; not topLevel so no unalias.
     assert_eq!(decode_address(run.output()), mid);
 }

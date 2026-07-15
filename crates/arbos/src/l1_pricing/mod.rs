@@ -573,7 +573,11 @@ impl<'a, D> L1PricingState<'a, D> {
         if payment_for_rewards > U256::ZERO {
             // Settlement is best-effort against the live pool balance; a typed
             // shortfall here would be pool/state drift, not a user error.
-            let _ = transfer_fn(L1_PRICER_FUNDS_POOL_ADDRESS, pay_rewards_to, payment_for_rewards);
+            let _ = transfer_fn(
+                L1_PRICER_FUNDS_POOL_ADDRESS,
+                pay_rewards_to,
+                payment_for_rewards,
+            );
         }
         available_funds = balance_fn(L1_PRICER_FUNDS_POOL_ADDRESS);
 
@@ -585,7 +589,11 @@ impl<'a, D> L1PricingState<'a, D> {
         }
         if balance_to_transfer > U256::ZERO {
             let addr_to_pay = poster_state.pay_to(backend).unwrap_or(batch_poster);
-            let _ = transfer_fn(L1_PRICER_FUNDS_POOL_ADDRESS, addr_to_pay, balance_to_transfer);
+            let _ = transfer_fn(
+                L1_PRICER_FUNDS_POOL_ADDRESS,
+                addr_to_pay,
+                balance_to_transfer,
+            );
             let _ = poster_state.set_funds_due(
                 backend,
                 balance_due_to_poster.saturating_sub(balance_to_transfer),
@@ -626,7 +634,8 @@ impl<'a, D> L1PricingState<'a, D> {
             let units_u256 = U256::from(units_allocated);
 
             // desired_derivative = -surplus / equilUnits
-            let (desired_mag, desired_pos) = signed_div(surplus_mag, !surplus_positive, equil_units);
+            let (desired_mag, desired_pos) =
+                signed_div(surplus_mag, !surplus_positive, equil_units);
 
             // actual_derivative = (surplus - oldSurplus) / unitsAllocated
             let (diff_mag, diff_pos) = signed_sub(

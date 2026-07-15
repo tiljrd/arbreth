@@ -6,7 +6,11 @@ use arb_storage::{
 use revm::{database::State, Database};
 
 use crate::{
-    address_set, burn::Burner, l1_pricing, l1_pricing::L1PricingState, l2_pricing::L2PricingState,
+    address_set,
+    burn::Burner,
+    l1_pricing,
+    l1_pricing::L1PricingState,
+    l2_pricing::L2PricingState,
     retryables::{self, RetryableState},
 };
 

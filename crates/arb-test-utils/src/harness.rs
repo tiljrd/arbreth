@@ -78,7 +78,10 @@ impl ArbosHarness {
     /// On-chain genesis block (`chain_info.json::GenesisBlockNum`). Non-zero
     /// for migrated chains (arb1 = 22207818); zero for fresh chains.
     pub fn with_genesis_block_num(mut self, n: u64) -> Self {
-        assert!(!self.initialized, "set genesis block num before initialize()");
+        assert!(
+            !self.initialized,
+            "set genesis block num before initialize()"
+        );
         self.genesis_block_num = n;
         self
     }
@@ -102,7 +105,10 @@ impl ArbosHarness {
     /// owner for ArbOS v >= 2; this applies the equivalent of a later
     /// `ArbOwner.setNetworkFeeAccount` so tests can pin a distinct sink.
     pub fn with_network_fee_account(mut self, a: Address) -> Self {
-        assert!(!self.initialized, "set network fee account before initialize()");
+        assert!(
+            !self.initialized,
+            "set network fee account before initialize()"
+        );
         self.network_fee_account = Some(a);
         self
     }

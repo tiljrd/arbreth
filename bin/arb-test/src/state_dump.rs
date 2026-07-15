@@ -79,7 +79,10 @@ pub fn run(args: StateDumpArgs) -> Result<()> {
             // Log the first raw response so the geth field encodings (storage
             // value form, cursor) can be confirmed against the live node.
             let raw = serde_json::to_string(&resp).unwrap_or_default();
-            eprintln!("first debug_accountRange response (<=800 chars):\n{}", truncate(&raw, 800));
+            eprintln!(
+                "first debug_accountRange response (<=800 chars):\n{}",
+                truncate(&raw, 800)
+            );
         }
 
         let root = resp
@@ -157,7 +160,10 @@ fn geth_account_to_jsonl(addr_key: &str, acct: &Value) -> Result<Option<String>>
     entry.insert("address".into(), Value::String(addr));
 
     let balance = acct.get("balance").and_then(Value::as_str).unwrap_or("0");
-    entry.insert("balance".into(), Value::String(decimal_or_hex_to_0x(balance)?));
+    entry.insert(
+        "balance".into(),
+        Value::String(decimal_or_hex_to_0x(balance)?),
+    );
 
     let nonce = acct.get("nonce").and_then(Value::as_u64).unwrap_or(0);
     if nonce != 0 {
@@ -303,9 +309,11 @@ mod tests {
     #[test]
     fn skips_empty_account() {
         let acct = json!({ "balance": "0", "nonce": 0 });
-        assert!(geth_account_to_jsonl("0x00000000000000000000000000000000000000cc", &acct)
-            .unwrap()
-            .is_none());
+        assert!(
+            geth_account_to_jsonl("0x00000000000000000000000000000000000000cc", &acct)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

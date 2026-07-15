@@ -5,10 +5,10 @@
 //! Deploys a state-mutating STORE contract and an always-REVERT contract, then
 //! submits retryables targeting them and compares arbreth vs Nitro across the
 //! full block/receipt/log/state surface:
-//!   - auto-redeem to STORE: inner contract code runs, slot written, ticket
-//!     deleted (escrow drained, numTries=1);
-//!   - auto-redeem to REVERT: retry fails, callvalue returns to escrow, ticket
-//!     retained, submission fee not refunded;
+//!   - auto-redeem to STORE: inner contract code runs, slot written, ticket deleted (escrow
+//!     drained, numTries=1);
+//!   - auto-redeem to REVERT: retry fails, callvalue returns to escrow, ticket retained, submission
+//!     fee not refunded;
 //!   - gas_limit=0: no auto-redeem, ticket sits in escrow, gas cost refunded.
 //!
 //! Run (needs Docker + release arb-reth):
@@ -410,8 +410,10 @@ fn diff_accounts_autoredeem_v60() {
 }
 
 fn diff_accounts_autoredeem_at(version: u64) {
-    use arb_test_harness::messaging::apply_l1_to_l2_alias;
-    use arb_test_harness::node::{BlockId, ExecutionNode};
+    use arb_test_harness::{
+        messaging::apply_l1_to_l2_alias,
+        node::{BlockId, ExecutionNode},
+    };
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let owner = derive_address(deployer_key());
     let mut rig = Rig::spawn(version, owner);

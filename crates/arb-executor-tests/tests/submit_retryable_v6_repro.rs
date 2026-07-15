@@ -97,10 +97,12 @@ fn submit_then_autoredeem_sender_balance_matches_canonical() {
     // So the total balance across all accounts must grow by exactly
     // `deposit_value`. A larger growth = a leak (e.g. prepaid minted but never
     // burned), a smaller growth = an over-burn.
-    let supply_delta: i128 =
-        balance_of_i128(supply_after) - balance_of_i128(supply_before);
+    let supply_delta: i128 = balance_of_i128(supply_after) - balance_of_i128(supply_before);
     let expected: i128 = balance_of_i128(deposit_value);
-    eprintln!("supply delta = {supply_delta}  expected (deposit) = {expected}  leak = {}", supply_delta - expected);
+    eprintln!(
+        "supply delta = {supply_delta}  expected (deposit) = {expected}  leak = {}",
+        supply_delta - expected
+    );
     assert_eq!(
         supply_delta, expected,
         "total supply must grow by exactly the deposit; a +baseFee*gas (27.5 uETH) leak is the auto-redeem prepaid not being undone"
@@ -172,15 +174,17 @@ fn run_block(harness: &mut ArbosHarness, submit_tx: ArbTransactionSigned, sender
 
     // 2. Drain and run the scheduled auto-redeem retry tx.
     let scheduled = executor.drain_scheduled_txs();
-    assert!(!scheduled.is_empty(), "expected a scheduled auto-redeem retry tx");
+    assert!(
+        !scheduled.is_empty(),
+        "expected a scheduled auto-redeem retry tx"
+    );
     for enc in scheduled {
         let mut slice = enc.as_slice();
-        let tx = <ArbTransactionSigned as alloy_eips::eip2718::Decodable2718>::decode_2718(
-            &mut slice,
-        )
-        .expect("decode scheduled retry tx");
-        let from = alloy_consensus::transaction::SignerRecoverable::recover_signer(&tx)
-            .unwrap_or(sender);
+        let tx =
+            <ArbTransactionSigned as alloy_eips::eip2718::Decodable2718>::decode_2718(&mut slice)
+                .expect("decode scheduled retry tx");
+        let from =
+            alloy_consensus::transaction::SignerRecoverable::recover_signer(&tx).unwrap_or(sender);
         let rec = Recovered::new_unchecked(tx, from);
         let res = executor
             .execute_transaction_without_commit(rec)

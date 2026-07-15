@@ -9,7 +9,9 @@ use revm::{database::State, Database};
 use tracing::info;
 
 use arb_storage::{set_account_code, Storage};
-use arbos::{arbos_state::initialize::bootstrap, arbos_types::ParsedInitMessage, burn::SystemBurner};
+use arbos::{
+    arbos_state::initialize::bootstrap, arbos_types::ParsedInitMessage, burn::SystemBurner,
+};
 
 use crate::error::GenesisError;
 

@@ -69,14 +69,25 @@ pub fn run(args: Arb1HeaderArgs) -> Result<()> {
         );
     }
     if header.number != args.block {
-        bail!("fetched block number {} != requested {}", header.number, args.block);
+        bail!(
+            "fetched block number {} != requested {}",
+            header.number,
+            args.block
+        );
     }
-    eprintln!("genesis block {} hash verified: {reported_hash}", args.block);
+    eprintln!(
+        "genesis block {} hash verified: {reported_hash}",
+        args.block
+    );
     eprintln!("  stateRoot  = {}", header.state_root);
     eprintln!("  parentHash = {}", header.parent_hash);
     eprintln!("  timestamp  = {}", header.timestamp);
-    let arbos_in_header = u64::from_be_bytes(header.mix_hash.0[16..24].try_into().unwrap_or_default());
-    eprintln!("  mixHash    = {} (ArbOS version {arbos_in_header})", header.mix_hash);
+    let arbos_in_header =
+        u64::from_be_bytes(header.mix_hash.0[16..24].try_into().unwrap_or_default());
+    eprintln!(
+        "  mixHash    = {} (ArbOS version {arbos_in_header})",
+        header.mix_hash
+    );
     if arbos_in_header != args.arbos_version {
         eprintln!(
             "  WARNING: header mixHash ArbOS version {arbos_in_header} != --arbos-version {}",
@@ -90,7 +101,10 @@ pub fn run(args: Arb1HeaderArgs) -> Result<()> {
         std::fs::create_dir_all(parent).ok();
     }
     std::fs::write(&args.out, &body).with_context(|| format!("write {}", args.out.display()))?;
-    eprintln!("wrote {} (genesis hash {reported_hash})", args.out.display());
+    eprintln!(
+        "wrote {} (genesis hash {reported_hash})",
+        args.out.display()
+    );
     Ok(())
 }
 
