@@ -284,6 +284,7 @@ fn submit_retryable_step(
 #[test]
 #[ignore]
 fn block0_parity_zero_chain_owner_v40() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let mut rig = StagedRig::spawn(40, Address::ZERO);
     let scenario = Scenario {
         name: "block0_parity_zero_owner".into(),
@@ -321,6 +322,7 @@ fn block0_parity_zero_chain_owner_v40() {
 #[test]
 #[ignore]
 fn block0_parity_with_custom_chain_owner_v40() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let owner = derive_address(owner_signing_key());
     let mut rig = StagedRig::spawn(40, owner);
     let scenario = Scenario {
@@ -507,6 +509,7 @@ fn dump_arbos_state_diff(rig: &StagedRig) {
 #[test]
 #[ignore]
 fn staged_upgrade_v40_to_v50_to_v60() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let owner_sk = owner_signing_key();
     let owner = derive_address(owner_sk);
     let mut rig = StagedRig::spawn(40, owner);
@@ -847,6 +850,7 @@ fn build_staged_upgrade_scenario(owner_sk: B256, owner: Address) -> Scenario {
 #[test]
 #[ignore]
 fn fuzz_staged_upgrade_post_v60_traffic() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let iterations: usize = std::env::var("ARB_FUZZ_ITERATIONS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -1151,7 +1155,7 @@ fn write_seed0_fixture() {
 /// between v6 and v11: pre-v8 `l1BlockNumber++`, v9 always-collect tips, the
 /// v10 `L1FeesAvailable` bookkeeping switch and pre-v10 batch-poster path, and
 /// the v11 `FixRedeemGas` / `PerBatchGasCost` / chain-owner-list rectification.
-fn build_arb1_upgrade_ladder(owner_sk: B256, owner: Address) -> Scenario {
+fn build_arb1_upgrade_ladder(owner_sk: B256, owner: Address, signer_sk: B256) -> Scenario {
     let msg_idx = MsgIdx::new();
     let mut steps: Vec<ScenarioStep> = Vec::new();
     let mut t = 1_700_000_000u64;
@@ -1165,7 +1169,6 @@ fn build_arb1_upgrade_ladder(owner_sk: B256, owner: Address) -> Scenario {
         t,
         l1_block,
     ));
-    let signer_sk = B256::repeat_byte(0x5a);
     let signer = derive_address(signer_sk);
     steps.push(deposit_step(
         &msg_idx,
@@ -1245,8 +1248,9 @@ fn staged_upgrade_v6_through_v11() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let owner_sk = owner_signing_key();
     let owner = derive_address(owner_sk);
+    let signer_sk = B256::repeat_byte(0x5a);
     let mut rig = StagedRig::spawn(6, owner);
-    let scenario = build_arb1_upgrade_ladder(owner_sk, owner);
+    let scenario = build_arb1_upgrade_ladder(owner_sk, owner, signer_sk);
 
     let report = rig.dual.run(&scenario).expect("dual run");
     if !report.is_clean() {
@@ -1285,4 +1289,23 @@ fn staged_upgrade_v6_through_v11() {
 
     let latest = rig.dual.left.block(BlockId::Latest).expect("left latest");
     assert_arbos_slots_match(&rig, latest.number);
+
+    // Every rung's schedule call and per-version transfer must have executed;
+    // a dropped tx no-ops identically on both nodes and hides coverage.
+    let at = BlockId::Number(latest.number);
+    let owner_nonce = rig
+        .dual
+        .right
+        .nonce(owner, at.clone())
+        .expect("owner nonce");
+    assert_eq!(
+        owner_nonce, 5,
+        "not every scheduleArbOSUpgrade call executed"
+    );
+    let signer_nonce = rig
+        .dual
+        .right
+        .nonce(derive_address(signer_sk), at)
+        .expect("signer nonce");
+    assert_eq!(signer_nonce, 5, "not every per-version transfer executed");
 }

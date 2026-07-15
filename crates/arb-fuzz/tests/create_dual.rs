@@ -1,42 +1,29 @@
-//! CREATE / CREATE2 dual-exec vs Nitro.
-//!
-//! Deploys factory contracts that CREATE / CREATE2 caller-supplied init code,
-//! plus top-level deploys, to exercise the contract-creation surface arb1 hits
-//! constantly and the arbreth-specific pieces (the CREATE trampoline, the
-//! EIP-3541 0xEF re-apply with its Stylus-marker exception, code-deposit, and
-//! collision handling): nested CREATE success / constructor-revert / value
-//! endowment, CREATE2 with a salt and a same-salt collision, a top-level deploy
-//! whose runtime starts 0xEF (EIP-3541 reject), and an empty-init deploy.
-//! Compared at v6 (pre-Shanghai), v11 (Shanghai / EIP-3860) and v60 (Stylus).
+//! CREATE / CREATE2 dual-exec coverage vs Nitro: nested CREATE success /
+//! constructor-revert / value endowment, CREATE2 with a salt and a same-salt
+//! collision, an EIP-3541 0xEF top-level reject, and an empty-init deploy,
+//! compared at ArbOS v6, v11, and v60.
 //!
 //! Run (needs Docker + release arb-reth):
 //!   ARB_SPEC_BINARY=$(pwd)/target/release/arb-reth \
 //!     cargo test -p arb-fuzz --test create_dual --release -- --ignored --nocapture
 
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Mutex,
-};
+use std::sync::Mutex;
 
-use alloy_primitives::{address, keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{address, Address, Bytes, B256, U256};
+use arb_fuzz::dual_scaffold::{
+    create_address, msg, store_runtime, wrap_init_code, Idx, Rig, DUAL_L2_CHAIN_ID,
+};
 use arb_test_harness::{
-    dual_exec::DualExec,
-    genesis::GenesisBuilder,
     messaging::{
         signed_tx::{derive_address, L2TxKind, SignedL2TxBuilder},
-        DepositBuilder, L1Message, MessageBuilder,
+        DepositBuilder, MessageBuilder,
     },
-    mock_l1::MockL1,
-    node::{
-        arbreth::ArbrethProcess, nitro_docker::NitroDocker, BlockId, ExecutionNode, NodeStartCtx,
-    },
-    scenario::{Scenario, ScenarioSetup, ScenarioStep},
+    node::{BlockId, ExecutionNode},
+    scenario::{Scenario, ScenarioSetup},
 };
 
 static SERIAL: Mutex<()> = Mutex::new(());
 
-const L2_CHAIN_ID: u64 = 412_346;
-const L1_CHAIN_ID: u64 = 11_155_111;
 const L1_BASE_FEE: u64 = 30_000_000_000;
 const SEQUENCER_ALIAS: Address = address!("a4b000000000000000000073657175656e636572");
 const FUNDER: Address = Address::new([0xa7; 20]);
@@ -44,35 +31,6 @@ const OWNER: Address = address!("000000000000000000000000000000000c1a0002");
 
 fn payer_key() -> B256 {
     B256::repeat_byte(0x2c)
-}
-
-fn create_address(deployer: Address, nonce: u64) -> Address {
-    let mut rlp = Vec::with_capacity(23);
-    rlp.push(0xd6);
-    rlp.push(0x94);
-    rlp.extend_from_slice(deployer.as_slice());
-    if nonce == 0 {
-        rlp.push(0x80);
-    } else {
-        assert!(nonce < 0x80);
-        rlp.push(nonce as u8);
-    }
-    Address::from_slice(&keccak256(&rlp)[12..])
-}
-
-/// Constructor returning `runtime` verbatim (12-byte prefix).
-fn deploy_init(runtime: &[u8]) -> Vec<u8> {
-    let l = runtime.len();
-    assert!(l < 256);
-    let mut out = vec![
-        0x60, l as u8, 0x60, 0x0c, 0x60, 0x00, 0x39, 0x60, l as u8, 0x60, 0x00, 0xf3,
-    ];
-    out.extend_from_slice(runtime);
-    out
-}
-
-fn store_runtime() -> Vec<u8> {
-    vec![0x60, 0x2a, 0x60, 0x00, 0x55, 0x00]
 }
 
 /// Init code that reverts immediately (constructor revert -> no code).
@@ -101,58 +59,9 @@ fn factory_create2_runtime() -> Vec<u8> {
     ]
 }
 
-struct Rig {
-    dual: DualExec<NitroDocker, ArbrethProcess>,
-}
-
-impl Rig {
-    fn spawn(version: u64) -> Self {
-        let mock = MockL1::start(L1_CHAIN_ID).expect("mock l1 start");
-        let genesis = GenesisBuilder::new(L2_CHAIN_ID, version)
-            .with_initial_chain_owner(OWNER)
-            .build()
-            .expect("genesis build");
-        let ctx = NodeStartCtx {
-            binary: None,
-            l2_chain_id: L2_CHAIN_ID,
-            l1_chain_id: L1_CHAIN_ID,
-            mock_l1_rpc: mock.rpc_url(),
-            genesis,
-            jwt_hex: String::new(),
-            workdir: std::path::PathBuf::new(),
-            http_port: 0,
-            authrpc_port: 0,
-        };
-        let nitro = NitroDocker::start(&ctx).expect("nitro docker start");
-        let arbreth = ArbrethProcess::start(&ctx).expect("arbreth start");
-        std::mem::forget(mock);
-        Rig {
-            dual: DualExec::new(nitro, arbreth),
-        }
-    }
-}
-
-struct Idx(AtomicU64);
-impl Idx {
-    fn new() -> Self {
-        Self(AtomicU64::new(1))
-    }
-    fn next(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::SeqCst)
-    }
-}
-
-fn msg(idx: u64, message: L1Message) -> ScenarioStep {
-    ScenarioStep::Message {
-        idx,
-        message,
-        delayed_messages_read: 1,
-    }
-}
-
 fn tx(nonce: u64, to: Option<Address>, value: U256, data: Vec<u8>) -> SignedL2TxBuilder {
     SignedL2TxBuilder {
-        chain_id: L2_CHAIN_ID,
+        chain_id: DUAL_L2_CHAIN_ID,
         nonce,
         to,
         value,
@@ -178,7 +87,7 @@ fn assert_clean_at(version: u64) {
     let payer = derive_address(payer_key());
     let factory_create = create_address(payer, 0);
     let factory_create2 = create_address(payer, 1);
-    let mut rig = Rig::spawn(version);
+    let mut rig = Rig::spawn(version, OWNER);
     let idx = Idx::new();
     let mut steps = Vec::new();
 
@@ -200,18 +109,28 @@ fn assert_clean_at(version: u64) {
     // Deploy the two factories (nonces 0, 1).
     steps.push(msg(
         idx.next(),
-        tx(0, None, U256::ZERO, deploy_init(&factory_create_runtime()))
-            .build()
-            .unwrap(),
+        tx(
+            0,
+            None,
+            U256::ZERO,
+            wrap_init_code(&factory_create_runtime()),
+        )
+        .build()
+        .unwrap(),
     ));
     steps.push(msg(
         idx.next(),
-        tx(1, None, U256::ZERO, deploy_init(&factory_create2_runtime()))
-            .build()
-            .unwrap(),
+        tx(
+            1,
+            None,
+            U256::ZERO,
+            wrap_init_code(&factory_create2_runtime()),
+        )
+        .build()
+        .unwrap(),
     ));
 
-    let store_init = deploy_init(&store_runtime());
+    let store_init = wrap_init_code(&store_runtime());
 
     // nonce 2: factory CREATE of STORE (success).
     steps.push(msg(
@@ -256,7 +175,7 @@ fn assert_clean_at(version: u64) {
     // nonce 7: top-level deploy whose runtime starts 0xEF -> EIP-3541 reject.
     steps.push(msg(
         idx.next(),
-        tx(7, None, U256::ZERO, deploy_init(&[0xEF, 0x01]))
+        tx(7, None, U256::ZERO, wrap_init_code(&[0xEF, 0x01]))
             .build()
             .unwrap(),
     ));
@@ -270,7 +189,7 @@ fn assert_clean_at(version: u64) {
         name: format!("create_v{version}"),
         description: format!("CREATE/CREATE2 surface at ArbOS v{version}"),
         setup: ScenarioSetup {
-            l2_chain_id: L2_CHAIN_ID,
+            l2_chain_id: DUAL_L2_CHAIN_ID,
             arbos_version: version,
             genesis: None,
         },
@@ -285,13 +204,19 @@ fn assert_clean_at(version: u64) {
         .block(BlockId::Latest)
         .expect("latest")
         .number;
+    let at = BlockId::Number(latest);
     let fc = rig
         .dual
         .right
-        .code(factory_create, BlockId::Number(latest))
+        .code(factory_create, at.clone())
         .map(|c| c.len())
         .unwrap_or(0);
     assert!(fc > 0, "factory deploy did not land — test would be hollow");
+    // All 9 payer txs (2 factory deploys + 5 factory calls + 2 top-level
+    // deploys) must have executed; a dropped tx cascades through the nonce
+    // sequence and no-ops identically on both nodes.
+    let payer_nonce = rig.dual.right.nonce(payer, at.clone()).expect("nonce");
+    assert_eq!(payer_nonce, 9, "not every payer tx executed");
 
     assert!(
         report.is_clean(),

@@ -40,8 +40,8 @@ const ARB1_ARBOS_VERSION: u64 = 6;
 // active/expired against this value.
 const ARB1_TIMESTAMP: u64 = 1_661_956_342;
 const ARB1_CHAIN_OWNER: Address = address!("d345e41ae2cb00311956aa7109fc801ae8c81a52");
-// Nitro's default; tunable via `--initial-l1-base-fee-wei` if the canonical
-// migration encoded a different value into its Type-11 init message.
+// Reference default; tunable via `--initial-l1-base-fee-wei` if the canonical
+// migration encoded a different value into its init message.
 const DEFAULT_L1_INITIAL_BASE_FEE_WEI: u64 = 50_000_000_000;
 
 #[derive(Debug, clap::Args)]
@@ -66,7 +66,7 @@ pub struct Arb1ArbosSynthesizeArgs {
     #[arg(long)]
     pub out: PathBuf,
 
-    /// L1 initial base fee (wei) at migration. Default = Nitro 50 gwei.
+    /// L1 initial base fee (wei) at migration. Default = 50 gwei.
     #[arg(long, default_value_t = DEFAULT_L1_INITIAL_BASE_FEE_WEI)]
     pub initial_l1_base_fee_wei: u64,
 }

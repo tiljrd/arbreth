@@ -1,5 +1,6 @@
 pub mod arbitrary_impls;
 pub mod corpus_helpers;
+pub mod dual_scaffold;
 pub mod guards;
 pub mod hostio_kit;
 pub mod precompile_manifest;

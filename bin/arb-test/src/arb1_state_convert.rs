@@ -9,8 +9,8 @@
 //! ...}` header carrying the expected migration state root.
 //!
 //! Emits **user accounts only**. The ArbOS-system account at 0xA4B05Fff... is
-//! synthesized separately by porting Nitro's `InitializeArbosInDatabase`; the
-//! two streams are concatenated before `arb-reth init-state`.
+//! synthesized separately by `arb1-arbos-synthesize`; the two streams are
+//! concatenated before `arb-reth init-state`.
 
 use std::{
     fs::OpenOptions,

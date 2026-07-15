@@ -1,12 +1,6 @@
-//! Deep contract-CALL dual-exec coverage vs Nitro.
-//!
-//! Real arb1 blocks diverged where synthetic transfers did not, because real
-//! transactions call deployed contracts whose inner execution (nested calls,
-//! value forwarding, DELEGATECALL context, STATICCALL write-protection, revert
-//! propagation) the simple-transfer fuzzers never exercised. This harness
-//! deploys hand-written EVM contracts and drives each call pattern, comparing
-//! arbreth's block/receipt/log/state output against a Nitro reference at the
-//! arb1-era versions (v6, v9) plus v60.
+//! Deep contract-CALL dual-exec coverage vs Nitro: nested calls, value
+//! forwarding, DELEGATECALL context, STATICCALL write-protection, and revert
+//! propagation, compared at ArbOS v6, v9, and v60.
 //!
 //! Run (needs Docker + release arb-reth):
 //!   ARB_SPEC_BINARY=$(pwd)/target/release/arb-reth \
@@ -14,69 +8,27 @@
 
 use std::sync::Mutex;
 
-use alloy_primitives::{address, keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{address, Address, Bytes, B256, U256};
+use arb_fuzz::dual_scaffold::{
+    create_address, msg, revert_runtime, store_runtime, wrap_init_code, Idx, Rig, DUAL_L2_CHAIN_ID,
+};
 use arb_test_harness::{
-    dual_exec::DualExec,
-    genesis::GenesisBuilder,
     messaging::{
         signed_tx::{derive_address, L2TxKind, SignedL2TxBuilder},
-        DepositBuilder, L1Message, MessageBuilder,
+        DepositBuilder, MessageBuilder,
     },
-    mock_l1::MockL1,
-    node::{
-        arbreth::ArbrethProcess, nitro_docker::NitroDocker, BlockId, ExecutionNode, NodeStartCtx,
-    },
-    scenario::{Scenario, ScenarioSetup, ScenarioStep},
+    node::{BlockId, ExecutionNode},
+    scenario::{Scenario, ScenarioSetup},
 };
-use std::sync::atomic::{AtomicU64, Ordering};
 
 static SERIAL: Mutex<()> = Mutex::new(());
 
-const L2_CHAIN_ID: u64 = 412_346;
-const L1_CHAIN_ID: u64 = 11_155_111;
 const L1_BASE_FEE: u64 = 30_000_000_000;
 const SEQUENCER_ALIAS: Address = address!("a4b000000000000000000073657175656e636572");
 const FUNDER: Address = Address::new([0xa2; 20]);
 
 fn payer_key() -> B256 {
     B256::repeat_byte(0x71)
-}
-
-/// CREATE address: keccak(rlp([deployer, nonce]))[12..]. Nonces < 0x80 only.
-fn create_address(deployer: Address, nonce: u64) -> Address {
-    let mut rlp = Vec::with_capacity(23);
-    rlp.push(0xd6);
-    rlp.push(0x94);
-    rlp.extend_from_slice(deployer.as_slice());
-    if nonce == 0 {
-        rlp.push(0x80);
-    } else {
-        assert!(nonce < 0x80, "test uses small nonces");
-        rlp.push(nonce as u8);
-    }
-    Address::from_slice(&keccak256(&rlp)[12..])
-}
-
-/// Wrap `runtime` in a constructor that returns it verbatim. Prefix is 12
-/// bytes: PUSH1 L, PUSH1 0x0c, PUSH1 0, CODECOPY, PUSH1 L, PUSH1 0, RETURN.
-fn deploy_init(runtime: &[u8]) -> Vec<u8> {
-    let l = runtime.len();
-    assert!(l < 256, "runtime < 256 bytes");
-    let mut out = vec![
-        0x60, l as u8, 0x60, 0x0c, 0x60, 0x00, 0x39, 0x60, l as u8, 0x60, 0x00, 0xf3,
-    ];
-    out.extend_from_slice(runtime);
-    out
-}
-
-/// STORE: writes 0x2a to slot 0; payable (default), so it also accepts value.
-fn store_runtime() -> Vec<u8> {
-    vec![0x60, 0x2a, 0x60, 0x00, 0x55, 0x00]
-}
-
-/// REVERT: reverts with empty data.
-fn revert_runtime() -> Vec<u8> {
-    vec![0x60, 0x00, 0x60, 0x00, 0xfd]
 }
 
 fn push20(addr: Address) -> Vec<u8> {
@@ -118,48 +70,6 @@ fn caller_revert_runtime(target: Address) -> Vec<u8> {
     v
 }
 
-struct Rig {
-    dual: DualExec<NitroDocker, ArbrethProcess>,
-}
-
-impl Rig {
-    fn spawn(version: u64, owner: Address) -> Self {
-        let mock = MockL1::start(L1_CHAIN_ID).expect("mock l1 start");
-        let genesis = GenesisBuilder::new(L2_CHAIN_ID, version)
-            .with_initial_chain_owner(owner)
-            .build()
-            .expect("genesis build");
-        let ctx = NodeStartCtx {
-            binary: None,
-            l2_chain_id: L2_CHAIN_ID,
-            l1_chain_id: L1_CHAIN_ID,
-            mock_l1_rpc: mock.rpc_url(),
-            genesis,
-            jwt_hex: String::new(),
-            workdir: std::path::PathBuf::new(),
-            http_port: 0,
-            authrpc_port: 0,
-        };
-        let nitro = NitroDocker::start(&ctx).expect("nitro docker start");
-        let arbreth = ArbrethProcess::start(&ctx).expect("arbreth start");
-        std::mem::forget(mock);
-        Rig {
-            dual: DualExec::new(nitro, arbreth),
-        }
-    }
-}
-
-struct Idx(AtomicU64);
-impl Idx {
-    fn new() -> Self {
-        Self(AtomicU64::new(1))
-    }
-    fn next(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::SeqCst)
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 fn deploy_or_call(
     nonce: u64,
     to: Option<Address>,
@@ -167,7 +77,7 @@ fn deploy_or_call(
     data: Vec<u8>,
 ) -> SignedL2TxBuilder {
     SignedL2TxBuilder {
-        chain_id: L2_CHAIN_ID,
+        chain_id: DUAL_L2_CHAIN_ID,
         nonce,
         to,
         value,
@@ -189,14 +99,6 @@ fn deploy_or_call(
         request_id: None,
         sender: SEQUENCER_ALIAS,
         base_fee_l1: 100_000_000,
-    }
-}
-
-fn msg(idx: u64, message: L1Message) -> ScenarioStep {
-    ScenarioStep::Message {
-        idx,
-        message,
-        delayed_messages_read: 1,
     }
 }
 
@@ -245,7 +147,7 @@ fn assert_clean_at(version: u64) {
         let i = idx.next();
         steps.push(msg(
             i,
-            deploy_or_call(nonce, None, U256::ZERO, deploy_init(&runtime))
+            deploy_or_call(nonce, None, U256::ZERO, wrap_init_code(&runtime))
                 .build()
                 .expect("deploy"),
         ));
@@ -272,7 +174,7 @@ fn assert_clean_at(version: u64) {
         name: format!("contract_calls_v{version}"),
         description: format!("deep contract-CALL surface at ArbOS v{version}"),
         setup: ScenarioSetup {
-            l2_chain_id: L2_CHAIN_ID,
+            l2_chain_id: DUAL_L2_CHAIN_ID,
             arbos_version: version,
             genesis: None,
         },
@@ -307,6 +209,10 @@ fn assert_clean_at(version: u64) {
             "deploy of {name} did not land (code empty) — test would be hollow"
         );
     }
+    // All 10 payer txs (6 deploys + 4 calls) must have executed; a dropped tx
+    // cascades through the nonce sequence and no-ops identically on both nodes.
+    let payer_nonce = rig.dual.right.nonce(payer, at.clone()).expect("nonce");
+    assert_eq!(payer_nonce, 10, "not every payer tx executed");
 
     assert!(
         report.is_clean(),

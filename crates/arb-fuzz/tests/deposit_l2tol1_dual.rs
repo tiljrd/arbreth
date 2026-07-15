@@ -1,45 +1,32 @@
-//! Deposit + L2->L1 messaging dual-exec vs Nitro.
-//!
-//! Exercises the Arbitrum-specific bridging accounting (value minting on
-//! deposit, value burning + the L2->L1 send-merkle accumulator on withdrawal)
-//! that the EVM-opcode fuzzers don't touch and that is core arb1 traffic:
-//!   - deposits to a fresh EOA, a deployed contract, and a zero-value touch;
-//!   - ArbSys.sendTxToL1 from an EOA (merkle-accumulator append + L2ToL1Tx log) repeated so the
-//!     accumulator carries through 1 -> 2 -> 3 leaves;
-//!   - ArbSys.withdrawEth (value burn -> total-supply decrease) + send.
-//!
-//! Compared at the arb1-era versions v6, v9 plus v60 (the sendTxToL1 return
-//! value is v4-gated and tips are collected at v9).
+//! Deposit + L2->L1 messaging dual-exec vs Nitro: value minting on deposits
+//! (fresh EOA, contract, zero-value touch), ArbSys.sendTxToL1 merkle-
+//! accumulator growth, and ArbSys.withdrawEth value burn, compared at ArbOS
+//! v6, v9, and v60.
 //!
 //! Run (needs Docker + release arb-reth):
 //!   ARB_SPEC_BINARY=$(pwd)/target/release/arb-reth \
 //!     cargo test -p arb-fuzz --test deposit_l2tol1_dual --release -- --ignored --nocapture
 
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Mutex,
-};
+use std::sync::Mutex;
 
-use alloy_primitives::{address, keccak256, Address, Bytes, B256, U256};
-use arb_fuzz::scaffolding::selector4;
+use alloy_primitives::{address, Address, Bytes, B256, U256};
+use arb_fuzz::{
+    dual_scaffold::{
+        create_address, msg, store_runtime, wrap_init_code, Idx, Rig, DUAL_L2_CHAIN_ID,
+    },
+    scaffolding::selector4,
+};
 use arb_test_harness::{
-    dual_exec::DualExec,
-    genesis::GenesisBuilder,
     messaging::{
         signed_tx::{derive_address, L2TxKind, SignedL2TxBuilder},
-        DepositBuilder, L1Message, MessageBuilder,
+        DepositBuilder, MessageBuilder,
     },
-    mock_l1::MockL1,
-    node::{
-        arbreth::ArbrethProcess, nitro_docker::NitroDocker, BlockId, ExecutionNode, NodeStartCtx,
-    },
+    node::{BlockId, ExecutionNode},
     scenario::{Scenario, ScenarioSetup, ScenarioStep},
 };
 
 static SERIAL: Mutex<()> = Mutex::new(());
 
-const L2_CHAIN_ID: u64 = 412_346;
-const L1_CHAIN_ID: u64 = 11_155_111;
 const L1_BASE_FEE: u64 = 30_000_000_000;
 const SEQUENCER_ALIAS: Address = address!("a4b000000000000000000073657175656e636572");
 const FUNDER: Address = Address::new([0xa6; 20]);
@@ -49,34 +36,6 @@ const L1_DEST: Address = address!("00000000000000000000000000000000d0570001");
 
 fn payer_key() -> B256 {
     B256::repeat_byte(0x4d)
-}
-
-fn create_address(deployer: Address, nonce: u64) -> Address {
-    let mut rlp = Vec::with_capacity(23);
-    rlp.push(0xd6);
-    rlp.push(0x94);
-    rlp.extend_from_slice(deployer.as_slice());
-    if nonce == 0 {
-        rlp.push(0x80);
-    } else {
-        assert!(nonce < 0x80);
-        rlp.push(nonce as u8);
-    }
-    Address::from_slice(&keccak256(&rlp)[12..])
-}
-
-fn deploy_init(runtime: &[u8]) -> Vec<u8> {
-    let l = runtime.len();
-    assert!(l < 256);
-    let mut out = vec![
-        0x60, l as u8, 0x60, 0x0c, 0x60, 0x00, 0x39, 0x60, l as u8, 0x60, 0x00, 0xf3,
-    ];
-    out.extend_from_slice(runtime);
-    out
-}
-
-fn store_runtime() -> Vec<u8> {
-    vec![0x60, 0x2a, 0x60, 0x00, 0x55, 0x00]
 }
 
 fn word_addr(a: Address) -> [u8; 32] {
@@ -112,55 +71,6 @@ fn withdraw_eth_calldata(dest: Address) -> Vec<u8> {
     out
 }
 
-struct Rig {
-    dual: DualExec<NitroDocker, ArbrethProcess>,
-}
-
-impl Rig {
-    fn spawn(version: u64) -> Self {
-        let mock = MockL1::start(L1_CHAIN_ID).expect("mock l1 start");
-        let genesis = GenesisBuilder::new(L2_CHAIN_ID, version)
-            .with_initial_chain_owner(OWNER)
-            .build()
-            .expect("genesis build");
-        let ctx = NodeStartCtx {
-            binary: None,
-            l2_chain_id: L2_CHAIN_ID,
-            l1_chain_id: L1_CHAIN_ID,
-            mock_l1_rpc: mock.rpc_url(),
-            genesis,
-            jwt_hex: String::new(),
-            workdir: std::path::PathBuf::new(),
-            http_port: 0,
-            authrpc_port: 0,
-        };
-        let nitro = NitroDocker::start(&ctx).expect("nitro docker start");
-        let arbreth = ArbrethProcess::start(&ctx).expect("arbreth start");
-        std::mem::forget(mock);
-        Rig {
-            dual: DualExec::new(nitro, arbreth),
-        }
-    }
-}
-
-struct Idx(AtomicU64);
-impl Idx {
-    fn new() -> Self {
-        Self(AtomicU64::new(1))
-    }
-    fn next(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::SeqCst)
-    }
-}
-
-fn msg(idx: u64, message: L1Message) -> ScenarioStep {
-    ScenarioStep::Message {
-        idx,
-        message,
-        delayed_messages_read: 1,
-    }
-}
-
 fn deposit(idx: u64, to: Address, amount: U256) -> ScenarioStep {
     msg(
         idx,
@@ -180,7 +90,7 @@ fn deposit(idx: u64, to: Address, amount: U256) -> ScenarioStep {
 
 fn payer_tx(nonce: u64, to: Address, value: U256, data: Vec<u8>) -> SignedL2TxBuilder {
     SignedL2TxBuilder {
-        chain_id: L2_CHAIN_ID,
+        chain_id: DUAL_L2_CHAIN_ID,
         nonce,
         to: Some(to),
         value,
@@ -206,7 +116,7 @@ fn deploy_store(nonce: u64) -> SignedL2TxBuilder {
         nonce,
         Address::ZERO,
         U256::ZERO,
-        deploy_init(&store_runtime()),
+        wrap_init_code(&store_runtime()),
     );
     b.to = None;
     b
@@ -217,7 +127,7 @@ fn assert_clean_at(version: u64) {
     let payer = derive_address(payer_key());
     let store = create_address(payer, 0);
     let fresh_eoa = address!("00000000000000000000000000000000eee00001");
-    let mut rig = Rig::spawn(version);
+    let mut rig = Rig::spawn(version, OWNER);
     let idx = Idx::new();
     let mut steps = Vec::new();
 
@@ -287,7 +197,7 @@ fn assert_clean_at(version: u64) {
         name: format!("deposit_l2tol1_v{version}"),
         description: format!("deposit + L2->L1 messaging at ArbOS v{version}"),
         setup: ScenarioSetup {
-            l2_chain_id: L2_CHAIN_ID,
+            l2_chain_id: DUAL_L2_CHAIN_ID,
             arbos_version: version,
             genesis: None,
         },
@@ -302,16 +212,22 @@ fn assert_clean_at(version: u64) {
         .block(BlockId::Latest)
         .expect("latest")
         .number;
+    let at = BlockId::Number(latest);
     let code_len = rig
         .dual
         .right
-        .code(store, BlockId::Number(latest))
+        .code(store, at.clone())
         .map(|c| c.len())
         .unwrap_or(0);
     assert!(
         code_len > 0,
         "STORE deploy did not land — test would be hollow"
     );
+    // All 5 payer txs (STORE deploy + 4 ArbSys calls) must have executed; a
+    // dropped tx cascades through the nonce sequence and no-ops identically on
+    // both nodes.
+    let payer_nonce = rig.dual.right.nonce(payer, at.clone()).expect("nonce");
+    assert_eq!(payer_nonce, 5, "not every payer tx executed");
 
     assert!(
         report.is_clean(),
