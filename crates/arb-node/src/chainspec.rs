@@ -276,24 +276,22 @@ fn inject_arbos_alloc(
                 alloc_obj.insert(prefixed, injected);
             }
             Some(k) => {
-                // Merge injected entry into the user-supplied one. User-set
-                // fields (balance, nonce, code, individual storage slots)
-                // win on conflict so fixture overrides replace bootstrap
-                // values; injected fields fill in anything the user didn't
-                // specify.
-                let user = alloc_obj.get_mut(&k).unwrap();
-                if !user.is_object() || !injected.is_object() {
+                // User-set fields (balance, nonce, code, individual storage
+                // slots) win on conflict so fixture overrides replace
+                // bootstrap values; injected fields fill in the rest.
+                let Some(injected_obj) = injected.as_object() else {
                     continue;
-                }
-                let user_obj = user.as_object_mut().unwrap();
-                let injected_obj = injected.as_object().unwrap();
+                };
+                let Some(user_obj) = alloc_obj.get_mut(&k).and_then(|u| u.as_object_mut()) else {
+                    continue;
+                };
                 for (field, val) in injected_obj {
                     if field == "storage" {
                         continue;
                     }
                     user_obj.entry(field.clone()).or_insert(val.clone());
                 }
-                let injected_storage = injected
+                let injected_storage = injected_obj
                     .get("storage")
                     .and_then(|s| s.as_object())
                     .cloned()
