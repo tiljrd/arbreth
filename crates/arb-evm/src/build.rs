@@ -172,7 +172,7 @@ impl<R, Spec, EvmF> ArbBlockExecutorFactory<R, Spec, EvmF> {
             multi_gas_current_fees: std::sync::OnceLock::new(),
             state_overlay: StateOverlay::new(),
             multi_gas_sink: crate::multi_gas::MultiGasSink::default(),
-            _l1_recorded_guard: crate::evm::L1BlockNumberRecordedGuard::default(),
+            _l1_recorded_guard: crate::evm::L1BlockNumberRecordedGuard,
         }
     }
 }
@@ -242,7 +242,7 @@ where
             multi_gas_current_fees: std::sync::OnceLock::new(),
             state_overlay: StateOverlay::new(),
             multi_gas_sink: crate::multi_gas::MultiGasSink::default(),
-            _l1_recorded_guard: crate::evm::L1BlockNumberRecordedGuard::default(),
+            _l1_recorded_guard: crate::evm::L1BlockNumberRecordedGuard,
         }
     }
 }
