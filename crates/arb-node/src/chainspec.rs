@@ -74,20 +74,17 @@ impl ChainSpecParser for ArbChainSpecParser {
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        // Chains that migrated onto Nitro (e.g. Arbitrum One at block
-        // 22207818) declare a non-zero genesis `number` and receive their full
-        // state from an external import (`init-state`). For those we skip
-        // ArbOS-alloc injection and header synthesis, using the JSON header
-        // verbatim, then re-seal the genesis header with the imported state
-        // root (which cannot be derived from the empty alloc).
-        let genesis_number = json_u64(value.pointer("/number"));
+        // Migrated chains (e.g. Arbitrum One at block 22207817) declare a
+        // non-zero genesis `number` and receive their full state from an
+        // external import (`init-state`), so ArbOS-alloc injection and header
+        // synthesis are skipped for them.
+        let genesis_number =
+            json_u64(value.pointer("/number")).map_err(|e| eyre!("genesis \"number\": {e}"))?;
 
-        // A migrated chain's genesis block is not empty (it carries the
-        // migration's init transactions), so `make_genesis_header` cannot
-        // reproduce its header from the (empty) alloc. Take the canonical
-        // header verbatim from the custom `genesisHeaderRlp` field; strip our
-        // custom keys (reth's parser does not recognize them) and install the
-        // header below.
+        // A migrated chain's genesis header (canonical parent hash, state
+        // root, gas fields) cannot be reproduced from the empty alloc, so
+        // take it verbatim from `genesisHeaderRlp`; strip the custom keys
+        // (reth's parser does not recognize them) and install it below.
         let imported_header = if genesis_number > 0 {
             let rlp_hex = value
                 .pointer("/genesisHeaderRlp")
@@ -99,6 +96,12 @@ impl ChainSpecParser for ArbChainSpecParser {
                 .map_err(|e| eyre!("decode genesisHeaderRlp hex: {e}"))?;
             let header = Header::decode(&mut bytes.as_slice())
                 .map_err(|e| eyre!("decode genesis header RLP: {e}"))?;
+            if header.number != genesis_number {
+                return Err(eyre!(
+                    "genesisHeaderRlp number {} does not match genesis \"number\" {genesis_number}",
+                    header.number
+                ));
+            }
             if let Some(obj) = value.as_object_mut() {
                 obj.remove("genesisHeaderRlp");
                 obj.remove("stateRoot");
@@ -139,18 +142,21 @@ impl ChainSpecParser for ArbChainSpecParser {
 }
 
 /// Parse a JSON value that may be a number or a `0x`-hex / decimal string into
-/// a `u64`, defaulting to 0.
-fn json_u64(v: Option<&Value>) -> u64 {
+/// a `u64`. Absent and `null` values mean 0; malformed values are an error.
+fn json_u64(v: Option<&Value>) -> eyre::Result<u64> {
     match v {
-        Some(Value::Number(n)) => n.as_u64().unwrap_or(0),
+        None | Some(Value::Null) => Ok(0),
+        Some(Value::Number(n)) => n.as_u64().ok_or_else(|| eyre!("{n} is not a valid u64")),
         Some(Value::String(s)) => {
             let s = s.trim();
             match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-                Some(h) => u64::from_str_radix(h, 16).unwrap_or(0),
-                None => s.parse().unwrap_or(0),
+                Some(h) => {
+                    u64::from_str_radix(h, 16).map_err(|e| eyre!("invalid hex \"{s}\": {e}"))
+                }
+                None => s.parse().map_err(|e| eyre!("invalid number \"{s}\": {e}")),
             }
         }
-        _ => 0,
+        Some(other) => Err(eyre!("expected number or string, got {other}")),
     }
 }
 
@@ -771,20 +777,23 @@ mod tests {
 
     #[test]
     fn json_u64_parses_number_hex_and_decimal() {
-        assert_eq!(json_u64(Some(&json!(22_207_818u64))), 22_207_818);
-        assert_eq!(json_u64(Some(&json!("0x152dd4a"))), 22_207_818);
-        assert_eq!(json_u64(Some(&json!("22207818"))), 22_207_818);
-        assert_eq!(json_u64(None), 0);
-        assert_eq!(json_u64(Some(&json!(null))), 0);
+        assert_eq!(json_u64(Some(&json!(22_207_817u64))).unwrap(), 22_207_817);
+        assert_eq!(json_u64(Some(&json!("0x152dd49"))).unwrap(), 22_207_817);
+        assert_eq!(json_u64(Some(&json!("22207817"))).unwrap(), 22_207_817);
+        assert_eq!(json_u64(None).unwrap(), 0);
+        assert_eq!(json_u64(Some(&json!(null))).unwrap(), 0);
+        assert!(json_u64(Some(&json!("0x152dd4x"))).is_err());
+        assert!(json_u64(Some(&json!("not-a-number"))).is_err());
+        assert!(json_u64(Some(&json!(-5))).is_err());
+        assert!(json_u64(Some(&json!({}))).is_err());
     }
 
     #[test]
     fn nonzero_genesis_installs_rlp_header_and_skips_injection() {
         use alloy_rlp::Encodable;
-        // A non-empty migration genesis header (real migrated chains carry the
-        // init transactions, so gas_used / roots are non-default).
+        // Non-default fields prove the header is installed verbatim.
         let header = Header {
-            number: 22_207_818,
+            number: 22_207_817,
             state_root: B256::repeat_byte(0x11),
             gas_used: 924_040,
             ..Default::default()
@@ -803,11 +812,11 @@ mod tests {
                     "EnableArbOS": true,
                     "InitialArbOSVersion": 6,
                     "InitialChainOwner": "0xd345e41ae2cb00311956aa7109fc801ae8c81a52",
-                    "GenesisBlockNum": 22207818,
+                    "GenesisBlockNum": 22207817,
                     "SkipGenesisInjection": true
                 }
             },
-            "number": "0x152dd4a",
+            "number": "0x152dd49",
             "genesisHeaderRlp": format!("0x{}", hex::encode(&rlp)),
             "nonce": "0x1",
             "timestamp": "0x630f8216",
@@ -821,8 +830,12 @@ mod tests {
         }))
         .unwrap();
 
+        let mismatched = spec_json.replace("\"0x152dd49\"", "\"0x152dd48\"");
+        let err = ArbChainSpecParser::parse(&mismatched).unwrap_err();
+        assert!(err.to_string().contains("does not match"));
+
         let spec = ArbChainSpecParser::parse(&spec_json).expect("parse arb1-like spec");
-        assert_eq!(spec.genesis_header().number, 22_207_818);
+        assert_eq!(spec.genesis_header().number, 22_207_817);
         assert_eq!(spec.genesis_header().state_root, B256::repeat_byte(0x11));
         assert_eq!(spec.genesis_header().gas_used, 924_040);
         // The installed header must hash exactly to the canonical block.
