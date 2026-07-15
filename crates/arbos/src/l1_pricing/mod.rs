@@ -500,9 +500,9 @@ impl<'a, D> L1PricingState<'a, D> {
         let bpt = self.batch_poster_table();
         let poster_state = bpt.open_poster(backend, batch_poster, true)?;
 
-        let mut funds_due_for_rewards = self.funds_due_for_rewards(backend).unwrap_or(U256::ZERO);
+        let mut funds_due_for_rewards = self.funds_due_for_rewards(backend)?;
 
-        let mut last_update_time = self.last_update_time(backend).unwrap_or(0);
+        let mut last_update_time = self.last_update_time(backend)?;
         if last_update_time == 0 && update_time > 0 {
             last_update_time = update_time - 1;
         }
@@ -519,7 +519,7 @@ impl<'a, D> L1PricingState<'a, D> {
         };
 
         // Allocate the fraction of accumulated units that maps to this update window.
-        let units_since = self.units_since_update(backend).unwrap_or(0);
+        let units_since = self.units_since_update(backend)?;
         let units_allocated = units_since
             .saturating_mul(alloc_num)
             .checked_div(alloc_denom)
@@ -529,7 +529,7 @@ impl<'a, D> L1PricingState<'a, D> {
         // Amortized-cost cap applies from v3+. Pre-v11 the stored cap is
         // `u64::MAX`, so the cap never binds until v11 rewrites it.
         if self.arbos_version >= arb_ver::ARBOS_VERSION_AMORTIZED_COST_CAP {
-            let cap_bips = self.amortized_cost_cap_bips(backend).unwrap_or(0);
+            let cap_bips = self.amortized_cost_cap_bips(backend)?;
             if cap_bips != 0 {
                 let cap = l1_basefee
                     .saturating_mul(U256::from(units_allocated))
@@ -543,15 +543,15 @@ impl<'a, D> L1PricingState<'a, D> {
         }
 
         // Accrue the spending against the poster's FundsDue.
-        let due_to_poster = poster_state.funds_due(backend).unwrap_or(U256::ZERO);
-        let _ = poster_state.set_funds_due(
+        let due_to_poster = poster_state.funds_due(backend)?;
+        poster_state.set_funds_due(
             backend,
             due_to_poster.saturating_add(wei_spent),
             &bpt.total_funds_due,
-        );
+        )?;
 
         // Accrue this update's share of the reward to FundsDueForRewards.
-        let per_unit_reward = self.per_unit_reward(backend).unwrap_or(0);
+        let per_unit_reward = self.per_unit_reward(backend)?;
         let reward_amount = U256::from(units_allocated).saturating_mul(U256::from(per_unit_reward));
         funds_due_for_rewards = funds_due_for_rewards.saturating_add(reward_amount);
         self.set_funds_due_for_rewards(backend, funds_due_for_rewards)?;
@@ -566,7 +566,7 @@ impl<'a, D> L1PricingState<'a, D> {
         funds_due_for_rewards = funds_due_for_rewards.saturating_sub(payment_for_rewards);
         self.set_funds_due_for_rewards(backend, funds_due_for_rewards)?;
 
-        let pay_rewards_to = self.pay_rewards_to(backend).unwrap_or(Address::ZERO);
+        let pay_rewards_to = self.pay_rewards_to(backend)?;
         // Unconditional: a zero-amount payout still carries the EIP-161 touch
         // and pre-Stylus zombie side effects on both accounts.
         let _ = transfer_fn(
@@ -577,31 +577,31 @@ impl<'a, D> L1PricingState<'a, D> {
         available_funds = balance_fn(L1_PRICER_FUNDS_POOL_ADDRESS);
 
         // Settle outstanding FundsDue to the poster, as much as the pool allows.
-        let balance_due_to_poster = poster_state.funds_due(backend).unwrap_or(U256::ZERO);
+        let balance_due_to_poster = poster_state.funds_due(backend)?;
         let mut balance_to_transfer = balance_due_to_poster;
         if available_funds < balance_to_transfer {
             balance_to_transfer = available_funds;
         }
         if balance_to_transfer > U256::ZERO {
-            let addr_to_pay = poster_state.pay_to(backend).unwrap_or(batch_poster);
+            let addr_to_pay = poster_state.pay_to(backend)?;
             let _ = transfer_fn(
                 L1_PRICER_FUNDS_POOL_ADDRESS,
                 addr_to_pay,
                 balance_to_transfer,
             );
-            let _ = poster_state.set_funds_due(
+            poster_state.set_funds_due(
                 backend,
                 balance_due_to_poster.saturating_sub(balance_to_transfer),
                 &bpt.total_funds_due,
-            );
+            )?;
         }
 
         self.set_last_update_time(backend, update_time)?;
 
         // Price adjustment: derivative-based update from the realised surplus.
         if units_allocated > 0 {
-            let total_funds_due = bpt.total_funds_due(backend).unwrap_or(U256::ZERO);
-            let fdr = self.funds_due_for_rewards(backend).unwrap_or(U256::ZERO);
+            let total_funds_due = bpt.total_funds_due(backend)?;
+            let fdr = self.funds_due_for_rewards(backend)?;
             let pool_balance = balance_fn(L1_PRICER_FUNDS_POOL_ADDRESS);
 
             let need = total_funds_due.saturating_add(fdr);
@@ -611,20 +611,15 @@ impl<'a, D> L1PricingState<'a, D> {
                 (need.saturating_sub(pool_balance), false)
             };
 
-            let inertia = self.inertia(backend).unwrap_or(INITIAL_INERTIA);
-            let equil_units = self
-                .equilibration_units(backend)
-                .unwrap_or(U256::from(INITIAL_EQUILIBRATION_UNITS_V6));
+            let inertia = self.inertia(backend)?;
+            let equil_units = self.equilibration_units(backend)?;
             let inertia_units = equil_units
                 .checked_div(U256::from(inertia))
                 .unwrap_or(U256::ZERO);
-            let price = self.price_per_unit(backend).unwrap_or(U256::ZERO);
+            let price = self.price_per_unit(backend)?;
 
             let alloc_plus_inert = inertia_units.saturating_add(U256::from(units_allocated));
-            let (old_surplus_mag, old_surplus_neg) = self
-                .last_surplus
-                .get_signed(backend)
-                .unwrap_or((U256::ZERO, false));
+            let (old_surplus_mag, old_surplus_neg) = self.last_surplus.get_signed(backend)?;
 
             let units_u256 = U256::from(units_allocated);
 
