@@ -3109,9 +3109,13 @@ where
         // Our zombie_accounts set approximates this — if a zombie is subsequently
         // dirtied by a non-zero transfer, it's removed from zombie_accounts
         // (matching Go's dirtyCount > zombieEntries check).
-        // Snapshot touched_accounts before draining so the diff log below
-        // can compare against what EIP-161 kept vs deleted.
-        let touched_snapshot: Vec<Address> = self.touched_accounts.iter().copied().collect();
+        let log_touched =
+            tracing::enabled!(target: "arb::executor::touched", tracing::Level::TRACE);
+        let touched_snapshot: Vec<Address> = if log_touched {
+            self.touched_accounts.iter().copied().collect()
+        } else {
+            Vec::new()
+        };
         let block_num_for_log = self.arb_ctx.l2_block_number;
         let mut filter_reason: Vec<(Address, &'static str)> = Vec::new();
         {
@@ -3119,7 +3123,7 @@ where
             let overlay = &mut self.state_overlay;
             let db: &mut State<DB> = self.inner.evm_mut().db_mut();
             let trace_filter =
-                tracing::enabled!(target: "arb::executor::eip161", tracing::Level::INFO);
+                tracing::enabled!(target: "arb::executor::eip161", tracing::Level::TRACE);
             let to_remove: Vec<Address> = self
                 .touched_accounts
                 .drain()
@@ -3158,13 +3162,15 @@ where
                 })
                 .collect();
 
-            if tracing::enabled!(target: "arb::executor::touched", tracing::Level::INFO) {
+            if log_touched {
+                let deleted: std::collections::HashSet<Address> =
+                    to_remove.iter().copied().collect();
                 let kept: Vec<Address> = touched_snapshot
                     .iter()
-                    .filter(|a| !to_remove.contains(a))
+                    .filter(|a| !deleted.contains(*a))
                     .copied()
                     .collect();
-                tracing::info!(
+                tracing::trace!(
                     target: "arb::executor::touched",
                     block = block_num_for_log,
                     touched_count = touched_snapshot.len(),
@@ -3174,8 +3180,8 @@ where
                     "post-tx touched-set"
                 );
             }
-            if tracing::enabled!(target: "arb::executor::eip161", tracing::Level::INFO) {
-                tracing::info!(
+            if trace_filter {
+                tracing::trace!(
                     target: "arb::executor::eip161",
                     block = block_num_for_log,
                     reasons = ?filter_reason,
@@ -3372,12 +3378,10 @@ fn apply_balance_op<DB: Database>(
         }
         return Ok(());
     }
-    if tracing::enabled!(target: "arb::executor::balance", tracing::Level::INFO) {
-        tracing::info!(
-            target: "arb::executor::balance",
-            from = ?from, to = ?to, amount = %amount, "balance op"
-        );
-    }
+    tracing::trace!(
+        target: "arb::executor::balance",
+        from = ?from, to = ?to, amount = %amount, "balance op"
+    );
     match (from, to) {
         (Some(from_addr), Some(to_addr)) => {
             let available = get_balance(state, *from_addr);
