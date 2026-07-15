@@ -83,6 +83,42 @@ pub mod arbos_version {
     pub const ARBOS_VERSION_60: u64 = 60;
     pub const ARBOS_VERSION_STYLUS_CONTRACT_LIMIT: u64 = ARBOS_VERSION_60;
     pub const ARBOS_VERSION_TRANSACTION_FILTERING: u64 = ARBOS_VERSION_60;
+
+    /// Version-gated precompile addresses and the ArbOS version that
+    /// activates them. Both precompile-map registration and the `[0xFE]`
+    /// code install during version upgrades read this table; a skew between
+    /// the two would be a consensus fork.
+    pub static PRECOMPILE_MIN_ARBOS_VERSIONS: &[(alloy_primitives::Address, u64)] = &[
+        (
+            // ArbWasm
+            alloy_primitives::address!("0000000000000000000000000000000000000071"),
+            ARBOS_VERSION_STYLUS,
+        ),
+        (
+            // ArbWasmCache
+            alloy_primitives::address!("0000000000000000000000000000000000000072"),
+            ARBOS_VERSION_STYLUS,
+        ),
+        (
+            // ArbNativeTokenManager
+            alloy_primitives::address!("0000000000000000000000000000000000000073"),
+            ARBOS_VERSION_41,
+        ),
+        (
+            // ArbFilteredTransactionsManager
+            alloy_primitives::address!("0000000000000000000000000000000000000074"),
+            ARBOS_VERSION_TRANSACTION_FILTERING,
+        ),
+    ];
+
+    /// Activation version for a version-banded precompile; `None` for
+    /// addresses that are always registered.
+    pub fn precompile_min_arbos_version(addr: alloy_primitives::Address) -> Option<u64> {
+        PRECOMPILE_MIN_ARBOS_VERSIONS
+            .iter()
+            .find(|(a, _)| *a == addr)
+            .map(|(_, v)| *v)
+    }
 }
 
 /// Trait for Arbitrum chain specifications.

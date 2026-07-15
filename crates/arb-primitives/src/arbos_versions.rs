@@ -6,21 +6,6 @@ pub const HISTORY_STORAGE_ADDRESS: Address = address!("0000F90827F1C53a10cb7A023
 /// EIP-2935 history storage contract code for Arbitrum.
 pub const HISTORY_STORAGE_CODE_ARBITRUM: Bytes = bytes!("3373fffffffffffffffffffffffffffffffffffffffe1460605760203603605c575f3563a3b1b31d5f5260205f6004601c60645afa15605c575f51600181038211605c57816205ffd0910311605c576205ffd09006545f5260205ff35b5f5ffd5b5f356205ffd0600163a3b1b31d5f5260205f6004601c60645afa15605c575f5103065500");
 
-/// Precompile addresses and the ArbOS version that introduced them.
-///
-/// During version upgrades, newly introduced precompiles get their code
-/// set to `[INVALID]` to mark them as existing accounts.
-pub static PRECOMPILE_MIN_ARBOS_VERSIONS: &[(Address, u64)] = &[
-    // ArbWasm: introduced in ArbOS 30 (Stylus)
-    (address!("0000000000000000000000000000000000000071"), 30),
-    // ArbWasmCache: introduced in ArbOS 30
-    (address!("0000000000000000000000000000000000000072"), 30),
-    // ArbNativeTokenManager: introduced in ArbOS 41
-    (address!("0000000000000000000000000000000000000073"), 41),
-    // ArbFilteredTransactionsManager: introduced in ArbOS 60
-    (address!("0000000000000000000000000000000000000074"), 60),
-];
-
 /// ArbOS version identifiers.
 ///
 /// Controls version-gated behavior across the node.

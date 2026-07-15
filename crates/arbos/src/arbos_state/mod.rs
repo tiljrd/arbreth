@@ -7,9 +7,8 @@ use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use revm::Database;
 use std::sync::OnceLock;
 
-use arb_primitives::arbos_versions::{
-    HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE_ARBITRUM, PRECOMPILE_MIN_ARBOS_VERSIONS,
-};
+use arb_chainspec::arbos_version::PRECOMPILE_MIN_ARBOS_VERSIONS;
+use arb_primitives::arbos_versions::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE_ARBITRUM};
 use arb_storage::{
     get_account_balance, set_account_code, set_account_nonce, storage_key_map, Detached, Storage,
     StorageBackedAddress, StorageBackedBigUint, StorageBackedBytes, StorageBackedUint64,

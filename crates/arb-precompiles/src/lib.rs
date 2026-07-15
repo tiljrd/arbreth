@@ -416,22 +416,28 @@ pub fn register_arb_precompiles(map: &mut PrecompilesMap, ctx: Arc<ArbPrecompile
         (ARBDEBUG_ADDRESS, create_arbdebug_precompile(ctx.clone())),
     ]);
 
-    if arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS {
-        map.extend_precompiles([
-            (ARBWASM_ADDRESS, create_arbwasm_precompile(ctx.clone())),
-            (
-                ARBWASMCACHE_ADDRESS,
-                create_arbwasmcache_precompile(ctx.clone()),
-            ),
-        ]);
+    // Version-banded precompiles activate per the shared table, the same
+    // source the upgrade-time `[0xFE]` code install reads.
+    let banded_active = |addr: alloy_primitives::Address| {
+        arb_chainspec::arbos_version::precompile_min_arbos_version(addr)
+            .is_some_and(|min| arbos_version >= min)
+    };
+    if banded_active(ARBWASM_ADDRESS) {
+        map.extend_precompiles([(ARBWASM_ADDRESS, create_arbwasm_precompile(ctx.clone()))]);
     }
-    if arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_41 {
+    if banded_active(ARBWASMCACHE_ADDRESS) {
+        map.extend_precompiles([(
+            ARBWASMCACHE_ADDRESS,
+            create_arbwasmcache_precompile(ctx.clone()),
+        )]);
+    }
+    if banded_active(ARBNATIVETOKENMANAGER_ADDRESS) {
         map.extend_precompiles([(
             ARBNATIVETOKENMANAGER_ADDRESS,
             create_arbnativetokenmanager_precompile(ctx.clone()),
         )]);
     }
-    if arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_TRANSACTION_FILTERING {
+    if banded_active(ARBFILTEREDTXMANAGER_ADDRESS) {
         map.extend_precompiles([(
             ARBFILTEREDTXMANAGER_ADDRESS,
             create_arbfilteredtxmanager_precompile(ctx.clone()),

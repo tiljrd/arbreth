@@ -137,7 +137,7 @@ fn warm(map: &PrecompilesMap, addr: &Address) -> bool {
 
 #[test]
 fn arb_precompiles_activate_at_min_arbos_version() {
-    for &(addr, min) in arb_primitives::arbos_versions::PRECOMPILE_MIN_ARBOS_VERSIONS {
+    for &(addr, min) in arb_chainspec::arbos_version::PRECOMPILE_MIN_ARBOS_VERSIONS {
         let before = build_at(min - 1);
         assert!(
             !contains(&before, &addr),
