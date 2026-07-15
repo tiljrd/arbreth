@@ -54,11 +54,11 @@ const BALANCE_OPCODE: u8 = 0x31;
 
 thread_local! {
     /// Post-`StartBlock` L1 block number for the current block, populated by
-    /// the executor before user txs run. Nitro's `opNumber` reads
-    /// `evm.ProcessingHook.L1BlockNumber()` (= storage value) which at
-    /// `arbos_version < 8` is the raw reported value + 1 — the mix_hash-derived
-    /// `block_env.number` lags by 1. When unset (e.g. during RPC `eth_call`),
-    /// fall back to `block_env.number`.
+    /// the executor before user txs run. The `NUMBER` opcode must surface the
+    /// storage-resident L1 height, which below ArbOS version 8 is the raw
+    /// reported value + 1 — the mix_hash-derived `block_env.number` lags by 1.
+    /// When unset (e.g. during RPC `eth_call`), fall back to
+    /// `block_env.number`.
     static L1_BLOCK_NUMBER_RECORDED: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 

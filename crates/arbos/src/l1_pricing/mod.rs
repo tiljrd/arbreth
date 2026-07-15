@@ -285,9 +285,7 @@ impl<'a, D> L1PricingState<'a, D> {
         negative: bool,
     ) -> Result<(), L1PricingError> {
         if self.arbos_version < arb_ver::ARBOS_VERSION_LAST_SURPLUS_SIGNED {
-            // Pre-v7 stores `|val|` as unsigned: Nitro `l1pricing.go:224`
-            // routes `SetLastSurplus` to `Set_preVersion7(val)`, which writes
-            // `BytesToHash(val.Bytes())` — `val.Bytes()` is the magnitude.
+            // Pre-v7 stores the magnitude only, discarding the sign.
             let _ = negative;
             return Ok(self.last_surplus.set(backend, magnitude)?);
         }
@@ -463,8 +461,7 @@ impl<'a, D> L1PricingState<'a, D> {
         TX_DATA_NON_ZERO_GAS_EIP2028.saturating_mul(l1_bytes)
     }
 
-    /// Pre-v10 batch poster spending update (Nitro
-    /// `arbos/l1pricing/l1PricingOldVersions.go::_preversion10_UpdateForBatchPosterSpending`).
+    /// Pre-v10 batch poster spending update.
     ///
     /// Differs from the v≥10 path in two important ways:
     /// (1) reads/writes the *real* `L1PricerFundsPoolAddress` ETH balance via
@@ -529,8 +526,8 @@ impl<'a, D> L1PricingState<'a, D> {
             .unwrap_or(0);
         self.set_units_since_update(backend, units_since.saturating_sub(units_allocated))?;
 
-        // Amortized-cost cap applies from v3+. Pre-v11 the cap is `MaxUint64` (Nitro's known
-        // bug — v11 fixes it). At v6 the cap is the broken value; we faithfully replicate.
+        // Amortized-cost cap applies from v3+. Pre-v11 the stored cap is
+        // `u64::MAX`, so the cap never binds until v11 rewrites it.
         if self.arbos_version >= arb_ver::ARBOS_VERSION_AMORTIZED_COST_CAP {
             let cap_bips = self.amortized_cost_cap_bips(backend).unwrap_or(0);
             if cap_bips != 0 {
@@ -668,11 +665,11 @@ impl<'a, D> L1PricingState<'a, D> {
         Ok(())
     }
 
-    /// Pre-v2 batch poster spending update (Nitro
-    /// `arbos/l1pricing/l1PricingOldVersions.go::_preVersion2_UpdateForBatchPosterSpending`).
+    /// Pre-v2 batch poster spending update.
     ///
-    /// arb1 launched at v6 so the v<2 path was never reached in production for arb1.
-    /// Implemented for completeness only; not currently exercised by the test suite.
+    /// Deliberately a stub: v<2 uses a different per-poster iteration model,
+    /// and no production Arbitrum chain launched below v2 (arb1 started at
+    /// v6). Kept as a typed marker so the version dispatch stays exhaustive.
     fn _preversion2_update<F, G, B>(
         &self,
         _backend: &mut B,
@@ -688,9 +685,6 @@ impl<'a, D> L1PricingState<'a, D> {
         G: FnMut(Address) -> U256,
         B: StorageBackend,
     {
-        // v<2 has a different per-poster iteration model — kept as a typed
-        // marker so the dispatch is exhaustive. No production arb chain
-        // launched at v<2.
         Ok(())
     }
 }
@@ -746,7 +740,6 @@ impl<D: revm::Database> L1PricingState<'_, D> {
                 &mut balance_fn,
             );
         }
-        let _ = &mut balance_fn; // v>=10 path uses tracked `l1_fees_available` instead.
 
         let bpt = self.batch_poster_table();
         let poster_state = bpt.open_poster(backend, batch_poster, true)?;

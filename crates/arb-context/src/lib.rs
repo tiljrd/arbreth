@@ -69,10 +69,10 @@ pub struct BlockCtx {
     pub block_timestamp: u64,
     /// L1 block number observed by the EVM `NUMBER` opcode (the header's
     /// monotonic L1 height) and the *initial* read for precompiles. After
-    /// `StartBlock` runs, the storage-resident L1 height may rise by +1 at
-    /// `arbos_version < 8` per Nitro's `internal_tx.go`; precompiles that
-    /// surface the *recorded* L1 height (`ArbSys.sendTxToL1`, …) read the
-    /// updated value via [`l1_block_number_recorded`].
+    /// `StartBlock` runs, the storage-resident L1 height may rise by +1 below
+    /// ArbOS version 8; precompiles that surface the *recorded* L1 height
+    /// (`ArbSys.sendTxToL1`, …) read the updated value via
+    /// [`l1_block_number_recorded`].
     pub l1_block_number_for_evm: u64,
     /// Storage-resident L1 height after `StartBlock` finishes. Defaults to
     /// [`l1_block_number_for_evm`] when not yet updated.

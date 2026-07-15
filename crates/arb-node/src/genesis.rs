@@ -89,9 +89,8 @@ pub fn initialize_arbos_state<D: Database>(
         set_account_code(state, *addr, Bytes::from_static(&[0xFE]));
     }
 
-    // `bootstrap` performs the full ArbOS state init Nitro does in
-    // `arbosstate.go::InitializeArbosState`: root-namespace slots, all
-    // subspace inits, initial chain-owner add, version upgrade chain.
+    // `bootstrap` performs the full ArbOS state init: root-namespace slots,
+    // all subspace inits, initial chain-owner add, version upgrade chain.
     let arb_state = bootstrap(
         state,
         chain_id,

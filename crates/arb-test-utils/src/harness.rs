@@ -68,7 +68,7 @@ impl ArbosHarness {
     }
 
     /// Initial chain owner. For ArbOS v >= 2, `bootstrap` also writes this as
-    /// the network fee account (matching Nitro's `arbosstate.go:278`).
+    /// the network fee account.
     pub fn with_initial_chain_owner(mut self, a: Address) -> Self {
         assert!(!self.initialized, "set chain owner before initialize()");
         self.initial_chain_owner = a;

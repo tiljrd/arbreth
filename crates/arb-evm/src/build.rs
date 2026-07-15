@@ -1394,23 +1394,13 @@ where
                     let state_ref = unsafe { arb_state.backing_storage.state_mut() };
                     if let Ok(l1_block_number) = arb_state.blockhashes.l1_block_number(state_ref) {
                         self.arb_ctx.l1_block_number = l1_block_number;
-                        // Surface the post-StartBlock storage value to
-                        // precompiles. The header's mix_hash L1 value
-                        // (seeded into the BlockCtx initially) lags this by
-                        // 1 at `arbos_version < 8` per Nitro's
-                        // `internal_tx.go`.
+                        // Surface the post-StartBlock storage value (pre-v8
+                        // it is the reported value + 1, which the header's
+                        // mix_hash-derived height lags) to precompiles and,
+                        // via the thread-local, to the EVM NUMBER opcode.
                         self.precompile_ctx
                             .block
                             .set_l1_block_number_recorded(l1_block_number);
-                        // Nitro's `opNumber` reads
-                        // `evm.ProcessingHook.L1BlockNumber(evm.Context)`
-                        // which returns the storage value. Mirror that by
-                        // updating revm's `BlockEnv.number` so the EVM
-                        // `NUMBER` opcode sees the same +1 adjustment.
-                        // The arb_number opcode handler also reads
-                        // this thread-local so the EVM NUMBER opcode
-                        // surfaces the recorded value rather than the
-                        // header's mix_hash L1 value.
                         crate::evm::set_l1_block_number_recorded(l1_block_number);
                     }
 
@@ -2487,16 +2477,13 @@ where
             }
         }
 
-        // Nitro's `state_transition.go` calls `AddBalance(tipReceipient, fee)`
-        // where `tipReceipient` is the GasChargingHook return (NetworkFeeAccount)
-        // — NOT the block coinbase. revm's `reward_beneficiary` always targets
-        // `block.beneficiary()` (= sequencer/BATCH_POSTER on arb1) and, at
-        // SHANGHAI+, EIP-3651 unconditionally warms it. Both paths leave an
-        // empty-touched entry for the coinbase in `output.result.state` even
-        // when the tip mint is zero. Persisting that entry would create a
-        // state-trie deletion marker that Nitro never emits, breaking the
-        // post-tx state-root parity. Drop it before commit when the touch
-        // carries no actual state change.
+        // The tip is paid to the network fee account, not the block coinbase,
+        // but revm's `reward_beneficiary` still targets `block.beneficiary()`
+        // and EIP-3651 (Shanghai+) unconditionally warms it. Both leave an
+        // empty-touched coinbase entry in `output.result.state` even when the
+        // tip mint is zero; persisting it would emit a spurious state-trie
+        // deletion marker and break post-tx state-root parity. Drop it before
+        // commit when the touch carries no actual state change.
         let coinbase = self.arb_ctx.coinbase;
         let coinbase_unchanged_touch = output
             .result
@@ -3364,15 +3351,13 @@ fn apply_balance_op<DB: Database>(
     amount: U256,
 ) -> Result<(), BalanceError> {
     if amount.is_zero() {
-        // Match Go's StateDB.AddBalance(to, 0): getOrNewStateObject materialises
-        // the object and stateObject.AddBalance(0) touches it when empty (the
-        // EIP-161 emptiness touch). The per-tx Finalise then prunes the empty
-        // touched account, and — pre-Stylus — the redeem-side
-        // CreateZombieIfDeleted can later resurrect it as a zombie leaf. Without
-        // this touch the account is never materialised, never enters
-        // `finalise_deleted`, and the zombie is silently dropped vs Nitro.
-        // The `from` side (Go's SubBalance(0)) does not touch; its pre-Stylus
-        // zombie handling is done by create_zombie_if_deleted at the call sites.
+        // A zero-amount credit must still touch an empty destination (the
+        // EIP-161 emptiness touch): per-tx Finalise then prunes it, and on
+        // pre-Stylus versions a later zombie resurrection can re-create it as
+        // an empty leaf. Without the touch the account never materialises,
+        // never enters `finalise_deleted`, and the zombie leaf is lost. The
+        // debit side does not touch; its pre-Stylus zombie handling is done
+        // by `create_zombie_if_deleted` at the call sites.
         if let Some(to_addr) = to {
             touch_account_if_empty(state, overlay, *to_addr);
         }
