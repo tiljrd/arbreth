@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
+use arb_chainspec::arbos_version as arb_ver;
 use arb_storage::{
     set_account_nonce, Storage, StorageBackedAddress, StorageBackedBigUint, StorageBackedBytes,
     StorageBackedUint64, StorageBackend, ARBOS_STATE_ADDRESS,
@@ -228,20 +229,18 @@ pub fn initialize_arbos_in_database<D: Database, B: Burner, C: StorageBackend>(
 }
 
 /// Bring a fresh database to a fully-initialised ArbOS state at the requested
-/// version. Mirrors Nitro's `arbos/arbosState/arbosstate.go::InitializeArbosState`
-/// — sets the well-known root offsets, initialises every subspace, adds the
-/// initial chain owner, and upgrades through to `target_arbos_version`.
+/// version — sets the well-known root offsets, initialises every subspace,
+/// adds the initial chain owner, and upgrades through to
+/// `target_arbos_version`.
 ///
-/// `genesis_block_num` is the on-chain genesis block (`GenesisBlockNum` from
-/// `chain_info.json`; zero for fresh chains, non-zero for migrated chains
-/// like arb1). `serialized_chain_config` is `json.Marshal(*params.ChainConfig)`
-/// of the chain's config; pass an empty slice for fresh chains that don't
-/// derive a chain config from an init message.
+/// `genesis_block_num` is the on-chain genesis block (zero for fresh chains,
+/// non-zero for migrated chains like arb1). `serialized_chain_config` is the
+/// chain config's canonical JSON serialization; pass an empty slice for fresh
+/// chains that don't derive one from an init message.
 ///
-/// `network_fee_account` follows Nitro: set to `initial_chain_owner` for
-/// `target_arbos_version >= 2`, otherwise zero. `infra_fee_account` is never
-/// set here (Nitro leaves it zero until `SetInfraFeeAccount` is called by a
-/// chain-owner action).
+/// The network fee account is the initial chain owner from ArbOS version 2
+/// onward and zero below; the infra fee account stays zero until a
+/// chain-owner action sets it.
 pub fn bootstrap<'a, D: Database, B: Burner>(
     state: &'a mut State<D>,
     chain_id: u64,
@@ -252,12 +251,22 @@ pub fn bootstrap<'a, D: Database, B: Burner>(
     target_arbos_version: u64,
     burner: B,
 ) -> Result<ArbosState<'a, D, B>, ArbosStateError> {
+    if target_arbos_version == 0 {
+        return Err(ArbosStateError::InvalidInitialVersion);
+    }
+    {
+        let backing = Storage::<D>::new(state, B256::ZERO);
+        let s = unsafe { backing.state_mut() };
+        if StorageBackedUint64::new(B256::ZERO, super::VERSION_OFFSET).get(s)? != 0 {
+            return Err(ArbosStateError::AlreadyInitialised);
+        }
+    }
+
     set_account_nonce(state, ARBOS_STATE_ADDRESS, 1);
 
     {
         let backing = Storage::<D>::new(state, B256::ZERO);
 
-        // Root-namespace slot writes (matches arbosstate.go:265-303).
         backing.set_by_uint64(super::VERSION_OFFSET, B256::from(U256::from(1u64)))?;
 
         // SAFETY: each `state_mut()` borrow is dropped before the next; `backing`
@@ -266,9 +275,7 @@ pub fn bootstrap<'a, D: Database, B: Burner>(
         StorageBackedBigUint::new(B256::ZERO, super::CHAIN_ID_OFFSET)
             .set(s, U256::from(chain_id))?;
 
-        // Nitro: networkFeeAccount = initialChainOwner only when v>=2; v1 leaves
-        // it zero until a chain-owner action sets it. Same convention here.
-        if target_arbos_version >= 2 {
+        if target_arbos_version >= arb_ver::ARBOS_VERSION_2 {
             let s = unsafe { backing.state_mut() };
             StorageBackedAddress::new(B256::ZERO, super::NETWORK_FEE_ACCOUNT_OFFSET)
                 .set(s, initial_chain_owner)?;
@@ -285,11 +292,11 @@ pub fn bootstrap<'a, D: Database, B: Burner>(
         }
 
         // Subspace inits. The address-set inits write `size = 0` at slot 0,
-        // which geth's commit prunes (no trie effect); the merkle-accumulator
-        // and blockhash inits are no-ops. We call them anyway to match Nitro's
-        // structure and surface any future non-zero-init logic.
+        // which commit prunes (no trie effect); the merkle-accumulator and
+        // blockhash inits are no-ops. Calling them keeps genesis init
+        // exhaustive and surfaces any future non-zero init logic.
         let l1_sto = backing.open_sub_storage(super::L1_PRICING_SUBSPACE);
-        let initial_rewards_recipient = if target_arbos_version >= 2 {
+        let initial_rewards_recipient = if target_arbos_version >= arb_ver::ARBOS_VERSION_2 {
             initial_chain_owner
         } else {
             l1_pricing::BATCH_POSTER_ADDRESS
@@ -315,7 +322,7 @@ pub fn bootstrap<'a, D: Database, B: Burner>(
     }
 
     // Open ArbosState now that version=1 is persisted, then add the initial
-    // chain owner (matches arbosstate.go:333) and step through versions.
+    // chain owner and step through versions.
     let mut arbos = ArbosState::open(state, burner)?;
 
     // SAFETY: see `Storage` struct-level invariant.
