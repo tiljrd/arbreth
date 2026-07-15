@@ -567,15 +567,13 @@ impl<'a, D> L1PricingState<'a, D> {
         self.set_funds_due_for_rewards(backend, funds_due_for_rewards)?;
 
         let pay_rewards_to = self.pay_rewards_to(backend).unwrap_or(Address::ZERO);
-        if payment_for_rewards > U256::ZERO {
-            // Settlement is best-effort against the live pool balance; a typed
-            // shortfall here would be pool/state drift, not a user error.
-            let _ = transfer_fn(
-                L1_PRICER_FUNDS_POOL_ADDRESS,
-                pay_rewards_to,
-                payment_for_rewards,
-            );
-        }
+        // Unconditional: a zero-amount payout still carries the EIP-161 touch
+        // and pre-Stylus zombie side effects on both accounts.
+        let _ = transfer_fn(
+            L1_PRICER_FUNDS_POOL_ADDRESS,
+            pay_rewards_to,
+            payment_for_rewards,
+        );
         available_funds = balance_fn(L1_PRICER_FUNDS_POOL_ADDRESS);
 
         // Settle outstanding FundsDue to the poster, as much as the pool allows.
@@ -811,18 +809,15 @@ impl<D: revm::Database> L1PricingState<'_, D> {
         self.set_funds_due_for_rewards(backend, fdr_after)?;
 
         let pay_rewards_to = self.pay_rewards_to(backend)?;
-        if payment_for_rewards > U256::ZERO {
-            // payment_for_rewards was clamped to l1_fees just above, which mirrors
-            // the L1 pricer pool balance. A typed shortfall here would indicate
-            // pool/state drift and must not block the rest of the bookkeeping.
-            let _ = transfer_fn(
-                L1_PRICER_FUNDS_POOL_ADDRESS,
-                pay_rewards_to,
-                payment_for_rewards,
-            );
-            l1_fees = l1_fees.saturating_sub(payment_for_rewards);
-            self.set_l1_fees_available(backend, l1_fees)?;
-        }
+        // Unconditional: a zero-amount payout still carries the EIP-161 touch
+        // side effects on both accounts.
+        let _ = transfer_fn(
+            L1_PRICER_FUNDS_POOL_ADDRESS,
+            pay_rewards_to,
+            payment_for_rewards,
+        );
+        l1_fees = l1_fees.saturating_sub(payment_for_rewards);
+        self.set_l1_fees_available(backend, l1_fees)?;
 
         let balance_due = poster_state.funds_due(backend)?;
         let mut transfer_amount = balance_due;
