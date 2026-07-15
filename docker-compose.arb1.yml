@@ -11,25 +11,26 @@
 #     read-write so reth can open it in place
 #
 # Bring up:
-#   export DATA_DIR=/tmp/arb1-local/reth-db
-#   export FOUNDATION_NITRO_DIR=/mnt/arbreth-storage/classic-export-v2/extracted/nitro
-#   export PARENT_CHAIN_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/<key>
-#   export PARENT_CHAIN_BEACON_URL=https://eth-mainnet.g.alchemy.com/v2/<key>
+#   export DATA_DIR=/path/to/arb1/reth-db
+#   export FOUNDATION_NITRO_DIR=/path/to/classic-export/nitro
+#   export PARENT_CHAIN_RPC_URL=https://eth-mainnet.example/v2/<key>
+#   export PARENT_CHAIN_BEACON_URL=https://eth-mainnet.example/v2/<key>
 #   docker compose -f docker-compose.arb1.yml up
 
 services:
   arbitrum-reth:
+    image: ghcr.io/0xbloctopus/arbitrum-reth:${ARBRETH_TAG:-latest}
+    pull_policy: missing
     build:
       context: .
       dockerfile: Dockerfile
-    image: arbreth-arbitrum-reth:latest
     container_name: arbreth-arb1
     restart: "no"
     ports:
       - "8645:8545"
       - "8651:8551"
     volumes:
-      - ${DATA_DIR}:/data
+      - ${DATA_DIR:?DATA_DIR must point to a datadir prepared with `arb-reth init-state`}:/data
     environment:
       - RUST_LOG=${RUST_LOG:-info}
       - ARB_BLOCK_BUFFER_SIZE=${ARB_BLOCK_BUFFER_SIZE:-128}
@@ -73,12 +74,12 @@ services:
     restart: "no"
     volumes:
       - ${NITRO_DATA_DIR:-nitro-arb1-data}:/tmp/nitro-data
-      - ${DATA_DIR}:/arbitrum-reth-data:ro
+      - ${DATA_DIR:?DATA_DIR must point to a datadir prepared with `arb-reth init-state`}:/arbitrum-reth-data:ro
       # Foundation's classic-msg from classic-export.tar so Nitro can replay
       # the pre-migration message history. We do NOT mount l2chaindata
       # because Nitro v3.10 rejects it as an "unexpected file" — arbreth
       # already carries the migrated state, so Nitro only needs classic-msg.
-      - ${FOUNDATION_NITRO_DIR}/classic-msg:/tmp/nitro-data/arbitrum/arb1/nitro/classic-msg:ro
+      - ${FOUNDATION_NITRO_DIR:?FOUNDATION_NITRO_DIR must point to the extracted classic-export nitro dir}/classic-msg:/tmp/nitro-data/arbitrum/arb1/nitro/classic-msg:ro
     command:
       - --init.empty=true
       - --init.validate-genesis-assertion=false
