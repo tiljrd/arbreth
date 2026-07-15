@@ -1,8 +1,8 @@
 //! Export an archive node's state at a block into reth's `init-state` JSONL
 //! format via paginated `debug_accountRange`.
 //!
-//! Used to bootstrap a migrated chain (e.g. Arbitrum One at its Nitro genesis
-//! block 22207818) whose state cannot be built from an init message.
+//! Used to bootstrap a migrated chain whose genesis state cannot be built
+//! from an init message (e.g. Arbitrum One, migration genesis 22207817).
 
 use std::{
     fs::OpenOptions,
@@ -26,8 +26,8 @@ pub struct StateDumpArgs {
     #[arg(long, env = "ARB1_ARCHIVE_RPC")]
     pub rpc: String,
 
-    /// Block number whose state to export (the migration genesis block).
-    #[arg(long, default_value_t = 22_207_818)]
+    /// Block number whose state to export.
+    #[arg(long)]
     pub block: u64,
 
     /// Output path for the reth `init-state` JSONL dump.

@@ -1,5 +1,5 @@
-//! Pins the Arbitrum One Nitro genesis: parsing `genesis/arbitrum-one.json`
-//! must reproduce the canonical block-22207818 hash, or forward sync would
+//! Pins the Arbitrum One migration genesis: parsing `genesis/arbitrum-one.json`
+//! must reproduce the canonical block-22207817 hash, or forward sync would
 //! diverge at the first produced block.
 
 use std::path::PathBuf;
@@ -9,11 +9,10 @@ use arb_node::chainspec::ArbChainSpecParser;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 
-/// Canonical values for Arbitrum One block 22207817 — the Nitro migration
-/// genesis built by `MakeGenesisBlock` after `InitializeArbosInDatabase`
-/// commits the migrated state. Block 22207818 is the first message-driven
-/// block (executes the init transactions), not the genesis. Verified via
-/// Alchemy archive at the canonical ArbOS slot 5 (GENESIS_BLOCK_NUM) which
+/// Canonical values for Arbitrum One block 22207817, the migration genesis
+/// carrying the migrated state. Block 22207818 is the first message-driven
+/// block (it executes the init transactions), not the genesis. Verified via
+/// archive reads of the canonical ArbOS genesis-block-number slot, which
 /// reads back 0x152dd49 = 22207817.
 const GENESIS_HASH: B256 =
     b256!("7d237dd685b96381544e223f8906e35645d63b89c19983f2246db48568c07986");

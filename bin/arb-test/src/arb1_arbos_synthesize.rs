@@ -29,10 +29,6 @@ use arbos::arbos_state::initialize::{initialize_retryables, InitRetryableData};
 // migration that produced the canonical state at block 22,207,817 used
 // 22,207,817 — the chain_info was updated post-migration.
 const ARB1_GENESIS_BLOCK_NUM: u64 = 22_207_817;
-// Hex of `json.Marshal(params.ChainConfig)` for arb1, captured from
-// nitro/cmd/chaininfo/arbitrum_chain_info.json via a Go helper. 554 bytes.
-const ARB1_CHAIN_CONFIG_HEX: &str = include_str!("arb1_data/chain_config.hex");
-
 // Arb1 v6 migration constants.
 const ARB1_CHAIN_ID: u64 = 42_161;
 const ARB1_ARBOS_VERSION: u64 = 6;
@@ -90,14 +86,6 @@ pub struct Arb1ArbosSynthesizeArgs {
     /// L1 initial base fee (wei) at migration. Default = Nitro 50 gwei.
     #[arg(long, default_value_t = DEFAULT_L1_INITIAL_BASE_FEE_WEI)]
     pub initial_l1_base_fee_wei: u64,
-
-    /// Skip writing the serialized chain config bytes. Required for arb1:
-    /// canonical state at block 22207818 (Aug 2022) has zero at the
-    /// chain_config length slot, confirmed via Alchemy archive
-    /// eth_getStorageAt(0xA4B05Fff..., <length slot>, 0x152dd4a). The Nitro
-    /// version that performed arb1's migration didn't yet write that field.
-    #[arg(long, default_value_t = true)]
-    pub skip_chain_config: bool,
 }
 
 #[derive(Deserialize)]
@@ -128,27 +116,16 @@ pub fn run(args: Arb1ArbosSynthesizeArgs) -> Result<()> {
     let user_addresses = read_user_addresses(&args.user_accounts)?;
     eprintln!("user_accounts: {} addresses", user_addresses.len());
 
-    // Bootstrap (via the harness) now matches Nitro's InitializeArbosState
-    // exactly: writes version/chain_id/network_fee_account/genesis_block_num,
-    // installs chain_config bytes, initialises every subspace, adds the
-    // initial chain owner, upgrades to the target version.
-    let chain_config_bytes = if args.skip_chain_config {
-        eprintln!("chain_config: SKIPPED (Nitro at arb1's Aug-2022 migration didn't write this)");
-        Vec::new()
-    } else {
-        let bytes = hex::decode(ARB1_CHAIN_CONFIG_HEX.trim())
-            .context("decode embedded arb1 chain_config hex")?;
-        eprintln!("chain_config: {} bytes", bytes.len());
-        bytes
-    };
-
+    // The chain-config bytes are deliberately not written: canonical arb1
+    // state at the migration has zero at the chain_config length slot
+    // (verified via archive eth_getStorageAt on the ArbOS account) because
+    // the migration-era software did not yet write that field.
     let initial_l1_base_fee = U256::from(args.initial_l1_base_fee_wei);
     let mut harness = ArbosHarness::new()
         .with_arbos_version(ARB1_ARBOS_VERSION)
         .with_chain_id(ARB1_CHAIN_ID)
         .with_initial_chain_owner(ARB1_CHAIN_OWNER)
         .with_genesis_block_num(ARB1_GENESIS_BLOCK_NUM)
-        .with_serialized_chain_config(chain_config_bytes)
         .with_l1_initial_base_fee(initial_l1_base_fee)
         .initialize();
 

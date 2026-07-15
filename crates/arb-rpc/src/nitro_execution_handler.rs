@@ -56,7 +56,7 @@ pub struct NitroExecutionHandler<Provider, BP> {
     provider: Provider,
     block_producer: Arc<BP>,
     state: Arc<RwLock<NitroExecutionState>>,
-    /// Genesis block number (0 for Arbitrum Sepolia, 22207818 for Arbitrum One).
+    /// Genesis block number (0 for Arbitrum Sepolia, 22207817 for Arbitrum One).
     genesis_block_num: u64,
     metrics: NitroExecutionMetrics,
 }
@@ -421,14 +421,14 @@ mod tests {
 
     #[test]
     fn message_index_maps_to_block_with_nonzero_genesis() {
-        // Arbitrum One migrated at block 22207818; message index 0 is the
-        // genesis block and index i maps to block genesis + i.
-        let h = NitroExecutionHandler::<(), ()>::new((), Arc::new(()), 22_207_818);
-        assert_eq!(h.message_index_to_block_number(0), 22_207_818);
-        assert_eq!(h.message_index_to_block_number(1), 22_207_819);
-        assert_eq!(h.block_number_to_message_index(22_207_818), Some(0));
-        assert_eq!(h.block_number_to_message_index(22_207_819), Some(1));
-        assert_eq!(h.block_number_to_message_index(22_207_817), None);
+        // The node passes `genesis_header().number` (22207817 for arb1);
+        // message index i maps to block genesis + i.
+        let h = NitroExecutionHandler::<(), ()>::new((), Arc::new(()), 22_207_817);
+        assert_eq!(h.message_index_to_block_number(0), 22_207_817);
+        assert_eq!(h.message_index_to_block_number(1), 22_207_818);
+        assert_eq!(h.block_number_to_message_index(22_207_817), Some(0));
+        assert_eq!(h.block_number_to_message_index(22_207_818), Some(1));
+        assert_eq!(h.block_number_to_message_index(22_207_816), None);
     }
 
     #[test]
