@@ -73,10 +73,13 @@ fn run_call_to_0xc8(stub_code: Option<Vec<u8>>) -> (bool, u64) {
 
     let cfg = ArbEvmConfig::new(Arc::new(ChainSpec::default()));
     let mut env: EvmEnv<SpecId> = EvmEnv {
-        cfg_env: revm::context::CfgEnv::default(),
+        cfg_env: revm::context::CfgEnv::new()
+            .with_chain_id(CHAIN_ID)
+            .with_spec_and_mainnet_gas_params(arb_chainspec::spec_id_by_arbos_version(
+                ARBOS_VERSION,
+            )),
         block_env: revm::context::BlockEnv::default(),
     };
-    env.cfg_env.chain_id = CHAIN_ID;
     env.cfg_env.disable_base_fee = true;
     env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
     env.block_env.basefee = HEADER_BASE_FEE;
@@ -88,8 +91,8 @@ fn run_call_to_0xc8(stub_code: Option<Vec<u8>>) -> (bool, u64) {
     let block_ctx = arb_context::BlockCtx::new(
         ARBOS_VERSION,
         BLOCK_TIMESTAMP,
-        BLOCK_NUMBER,
         L1_BLOCK_NUMBER,
+        BLOCK_NUMBER,
         false,
     );
     evm_factory.stage_ctx(Arc::new(arb_context::ArbPrecompileCtx::with_block(

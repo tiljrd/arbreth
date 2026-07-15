@@ -1,7 +1,8 @@
 //! Locks down the invariant that `apply_internal_tx_update` never touches
-//! the ArbOS-system sender (`0x00…0a4b05`). Nitro's `state_transition.go`
-//! short-circuits on `StartTxHook → endTxNow=true` before `preCheck()` runs,
-//! so the sender's nonce/balance must be untouched for `ArbitrumInternalTx`.
+//! the ArbOS-system sender: internal txs end before any nonce/balance
+//! accounting runs.
+
+use std::cell::RefCell;
 
 use alloy_primitives::{Address, U256};
 use arb_test_utils::ArbosHarness;
@@ -34,7 +35,6 @@ fn run_internal_tx_and_collect_touches(arbos_version: u64, data: &[u8]) -> Touch
         .initialize();
     let state_ptr = h.state_ptr();
     let mut arb_state = h.arbos_state();
-    let storage = arb_state.backing_storage.clone();
 
     let ctx = InternalTxContext {
         block_number: 22_207_963,
@@ -42,31 +42,28 @@ fn run_internal_tx_and_collect_touches(arbos_version: u64, data: &[u8]) -> Touch
         prev_hash: alloy_primitives::B256::ZERO,
     };
 
-    let mut touched = TouchRecorder::default();
-    let touched_ptr: *mut TouchRecorder = &mut touched;
+    let touched = RefCell::new(TouchRecorder::default());
 
     let mut do_transfer = |from: Address, to: Address, _amount: U256| {
-        unsafe {
-            (*touched_ptr).record(from);
-            (*touched_ptr).record(to);
-        }
+        touched.borrow_mut().record(from);
+        touched.borrow_mut().record(to);
         Ok::<_, arbos::util::BalanceError>(())
     };
     let mut do_balance = |addr: Address| -> U256 {
-        unsafe { (*touched_ptr).record(addr) };
+        touched.borrow_mut().record(addr);
         U256::from(10u64).pow(U256::from(24u64))
     };
 
-    let _ = apply_internal_tx_update(
+    apply_internal_tx_update(
         unsafe { &mut *state_ptr },
         data,
         &mut arb_state,
         &ctx,
         &mut do_transfer,
         &mut do_balance,
-    );
-    let _ = storage;
-    touched
+    )
+    .expect("internal tx update");
+    touched.into_inner()
 }
 
 #[test]

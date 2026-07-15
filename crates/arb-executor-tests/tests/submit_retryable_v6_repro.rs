@@ -1,6 +1,7 @@
-//! Reproduces arb1 block 22,209,702: an ArbitrumSubmitRetryableTx followed by
-//! its auto-redeem ArbitrumRetryTx at ArbOS v6. Asserts the L1-aliased sender's
-//! net balance change matches the canonical (Nitro) value.
+//! Reproduces arb1 block 22,209,702's shape — an ArbitrumSubmitRetryableTx
+//! followed by its auto-redeem ArbitrumRetryTx at ArbOS v6 — and asserts total
+//! supply grows by exactly the minted deposit (fees, escrow, prepaid and
+//! refunds are internal transfers/burns that must conserve it).
 
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use alloy_evm::{
 use alloy_primitives::{address, Address, Bytes, Signature, B256, U256};
 use arb_alloy_consensus::tx::ArbSubmitRetryableTx;
 use arb_evm::config::ArbEvmConfig;
-use arb_executor_tests::helpers::{balance_of, fund_account};
+use arb_executor_tests::helpers::fund_account;
 use arb_primitives::{signed_tx::ArbTypedTransaction, ArbTransactionSigned};
 use arb_test_utils::ArbosHarness;
 use reth_chainspec::ChainSpec;
@@ -33,7 +34,7 @@ fn zero_sig() -> Signature {
 }
 
 #[test]
-fn submit_then_autoredeem_sender_balance_matches_canonical() {
+fn submit_then_autoredeem_conserves_total_supply() {
     let mut harness = ArbosHarness::new()
         .with_arbos_version(6)
         .with_chain_id(CHAIN_ID)
@@ -53,12 +54,11 @@ fn submit_then_autoredeem_sender_balance_matches_canonical() {
     let gas_fee_cap = U256::from(300_000_000u128); // 0.3 gwei
     let gas: u64 = 274_488;
 
-    // Sender starts at zero balance (deposit is minted by the submit).
+    // Pre-touch the actors so the conservation sum sees stable accounts; the
+    // deposit itself is minted by the submit.
     fund_account(harness.state(), FROM, U256::ZERO);
-    // Pre-touch the actors so the conservation sum sees stable accounts.
     fund_account(harness.state(), REFUND_TO, U256::ZERO);
     fund_account(harness.state(), RETRY_TO, U256::ZERO);
-    let from_before = balance_of(harness.state(), FROM);
     let supply_before = total_supply(&mut harness);
 
     let submit = ArbSubmitRetryableTx {
@@ -81,31 +81,16 @@ fn submit_then_autoredeem_sender_balance_matches_canonical() {
         zero_sig(),
     );
 
-    // RETRY_TO has no code here; the inner redeem call to an empty account
-    // succeeds with status=1 (matching the real tx's success outcome for the
-    // gas/refund accounting — the inner call's effects on RETRY_TO are not the
-    // subject of this balance-conservation check).
-    let from_after = run_block(&mut harness, submit_tx, FROM);
+    // RETRY_TO has no code, so the inner redeem call succeeds with status=1
+    // like the real tx; its effects on RETRY_TO are not under test.
+    run_block(&mut harness, submit_tx, FROM);
     let supply_after = total_supply(&mut harness);
 
-    let from_delta: i128 = balance_of_i128(from_after) - balance_of_i128(from_before);
-    eprintln!("from net delta = {from_delta}");
-
-    // The ONLY new wei introduced into the system is the minted `deposit_value`.
-    // Submission fee, network gas cost, escrow, prepaid, gas charge and all the
-    // end-tx refunds are internal transfers/burns that conserve total supply.
-    // So the total balance across all accounts must grow by exactly
-    // `deposit_value`. A larger growth = a leak (e.g. prepaid minted but never
-    // burned), a smaller growth = an over-burn.
     let supply_delta: i128 = balance_of_i128(supply_after) - balance_of_i128(supply_before);
     let expected: i128 = balance_of_i128(deposit_value);
-    eprintln!(
-        "supply delta = {supply_delta}  expected (deposit) = {expected}  leak = {}",
-        supply_delta - expected
-    );
     assert_eq!(
         supply_delta, expected,
-        "total supply must grow by exactly the deposit; a +baseFee*gas (27.5 uETH) leak is the auto-redeem prepaid not being undone"
+        "total supply must grow by exactly the minted deposit"
     );
 }
 
@@ -126,8 +111,8 @@ fn total_supply(harness: &mut ArbosHarness) -> U256 {
 }
 
 /// Runs the submit-retryable, then drains and runs the scheduled auto-redeem
-/// retry tx in the same block. Returns the sender's balance after both.
-fn run_block(harness: &mut ArbosHarness, submit_tx: ArbTransactionSigned, sender: Address) -> U256 {
+/// retry tx in the same block.
+fn run_block(harness: &mut ArbosHarness, submit_tx: ArbTransactionSigned, sender: Address) {
     let chain_spec: Arc<ChainSpec> = Arc::new(ChainSpec::default());
     let cfg = ArbEvmConfig::new(chain_spec);
 
@@ -193,5 +178,4 @@ fn run_block(harness: &mut ArbosHarness, submit_tx: ArbTransactionSigned, sender
     }
 
     let _ = executor.finish().expect("finish");
-    balance_of(harness.state(), sender)
 }

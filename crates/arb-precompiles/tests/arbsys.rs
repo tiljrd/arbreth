@@ -131,14 +131,11 @@ fn was_aliased_returns_true_when_top_level_aliased() {
     assert_eq!(decode_u256(run.output()), U256::from(1));
 }
 
-// ── v6 isTopLevel branch: arbos<6 uses `depth==2`, arbos>=6 uses the
-// `origin == caller_at_depth(depth-1)` chain check at depth>2.
-// Locks down the per-version semantics flagged as the highest-risk v6 change.
+// isTopLevel: arbos<6 uses `depth==2`; arbos>=6 checks
+// `origin == caller_at_depth(depth-1)`.
 
 #[test]
 fn was_aliased_v5_returns_false_at_depth_three() {
-    // v<6: topLevel iff depth==2; at depth 3 the v<6 path returns false even
-    // when the inner caller chain would qualify under v6 rules.
     let origin: Address = address!("00000000000000000000000000000000000000aa");
     let intermediate: Address = address!("00000000000000000000000000000000000000bb");
     let run = PrecompileTest::new()
@@ -154,9 +151,6 @@ fn was_aliased_v5_returns_false_at_depth_three() {
 
 #[test]
 fn was_aliased_v6_returns_true_at_depth_three_when_caller_chain_is_origin() {
-    // v>=6: aliased iff `origin == caller_at_depth(depth-1)` (= caller of the
-    // depth-2 frame). Models EOA->A->ArbSys where A self-calls before invoking
-    // the precompile; the depth-2 frame's caller is still the EOA.
     let origin: Address = address!("00000000000000000000000000000000000000aa");
     let inner: Address = address!("00000000000000000000000000000000000000bb");
     let run = PrecompileTest::new()
@@ -172,8 +166,6 @@ fn was_aliased_v6_returns_true_at_depth_three_when_caller_chain_is_origin() {
 
 #[test]
 fn was_aliased_v6_returns_false_at_depth_three_when_caller_chain_breaks() {
-    // v>=6: at depth 3 with caller_at_depth(2) != origin, topLevel=false.
-    // Models EOA->A->B->ArbSys where B's caller (A) is not the EOA.
     let origin: Address = address!("00000000000000000000000000000000000000aa");
     let mid: Address = address!("00000000000000000000000000000000000000bb");
     let inner: Address = address!("00000000000000000000000000000000000000cc");
@@ -191,23 +183,18 @@ fn was_aliased_v6_returns_false_at_depth_three_when_caller_chain_breaks() {
 #[test]
 fn caller_without_alias_v6_unaliases_caller_when_top_level() {
     use arbos::util::inverse_remap_l1_address;
-    // v>=6 at depth=3, caller_at_depth(2) == origin → aliased=true → unalias the
-    // depth-2 caller (== `caller_at_depth(depth-1)`).
     let origin: Address = address!("00000000000000000000000000000000000000aa");
-    let depth_minus_one: Address = address!("11110000000000000000000000000000000022aa");
+    let innermost: Address = address!("00000000000000000000000000000000000000cc");
     let run = PrecompileTest::new()
         .arbos_version(ARBOS_V6)
         .evm_depth(3)
         .tx_is_aliased(true)
         .caller(origin)
-        // caller_at_depth(depth-1=2) is the second entry → must equal origin so
-        // topLevel=true; `address` returned is itself `caller_at_depth(depth-1)`.
-        .caller_stack(vec![origin, origin, depth_minus_one])
+        // caller_at_depth(depth-1=2) is stack index 1; it must equal origin
+        // for topLevel, and is also the address that gets unaliased.
+        .caller_stack(vec![origin, origin, innermost])
         .arbos_state()
         .call(arbsys, &calldata("myCallersAddressWithoutAliasing()", &[]));
-    // We push `origin` at index 1 (=caller_at_depth(2)) which is what gets
-    // unaliased and returned. inverse_remap_l1_address(origin) yields the
-    // pre-aliased L1 address.
     assert_eq!(
         decode_address(run.output()),
         inverse_remap_l1_address(origin)
@@ -216,8 +203,6 @@ fn caller_without_alias_v6_unaliases_caller_when_top_level() {
 
 #[test]
 fn caller_without_alias_v6_returns_caller_unchanged_when_not_top_level() {
-    // v>=6 at depth=3, caller_at_depth(2) != origin → aliased=false → return
-    // the depth-2 caller verbatim (no unalias).
     let origin: Address = address!("00000000000000000000000000000000000000aa");
     let mid: Address = address!("00000000000000000000000000000000000000bb");
     let inner: Address = address!("00000000000000000000000000000000000000cc");
@@ -229,7 +214,6 @@ fn caller_without_alias_v6_returns_caller_unchanged_when_not_top_level() {
         .caller_stack(vec![origin, mid, inner])
         .arbos_state()
         .call(arbsys, &calldata("myCallersAddressWithoutAliasing()", &[]));
-    // depth-1=2 → caller_at_depth(2)=mid; not topLevel so no unalias.
     assert_eq!(decode_address(run.output()), mid);
 }
 
