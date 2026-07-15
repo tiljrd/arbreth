@@ -110,6 +110,7 @@ impl MessageBuilder for RetryableSubmitBuilder {
                 base_fee_l1: 0,
             },
             l2_msg: crate::messaging::b64_l2_msg(&body.into()),
+            batch_gas_cost: None,
         })
     }
 }

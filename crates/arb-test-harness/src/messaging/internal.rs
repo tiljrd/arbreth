@@ -106,6 +106,7 @@ impl MessageBuilder for InternalTxBuilder {
                 base_fee_l1: self.base_fee_l1,
             },
             l2_msg: String::new(),
+            batch_gas_cost: None,
         })
     }
 }

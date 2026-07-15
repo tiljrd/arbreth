@@ -27,6 +27,14 @@ pub struct L1Message {
     pub header: L1MessageHeader,
     #[serde(rename = "l2Msg")]
     pub l2_msg: String,
+    /// Precomputed batch gas cost; required by the reference node for
+    /// batch-posting-report messages.
+    #[serde(
+        rename = "batchGasCost",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub batch_gas_cost: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
