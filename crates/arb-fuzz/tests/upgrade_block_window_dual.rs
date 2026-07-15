@@ -115,6 +115,7 @@ fn batch_message(subs: &[SignedL2TxBuilder], block_number: u64, timestamp: u64) 
             base_fee_l1: FUZZ_L1_BASE_FEE,
         },
         l2_msg: b64_l2_msg(&Bytes::from(body)),
+        batch_gas_cost: None,
     }
 }
 
