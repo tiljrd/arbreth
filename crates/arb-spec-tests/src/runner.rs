@@ -119,6 +119,19 @@ pub fn run_execution_dir(dir: &Path) {
     }
 }
 
+/// Execution-shaped fixtures (top-level `genesis`/`messages`) run against a
+/// spawned node via the `*_exec` targets; the harness runner must not parse
+/// them as (empty) `setup`/`actions`/`assertions` cases.
+fn is_execution_shaped(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    v.get("messages").is_some() || v.get("genesis").is_some()
+}
+
 pub fn run_dir(dir: &Path) {
     assert!(dir.exists(), "fixture dir missing: {}", dir.display());
     let mut failures = Vec::new();
@@ -126,6 +139,9 @@ pub fn run_dir(dir: &Path) {
     for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        if is_execution_shaped(path) {
             continue;
         }
         count += 1;

@@ -14,7 +14,7 @@ pub struct Fixture {
     pub assertions: Assertions,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Setup {
     #[serde(default = "default_arbos_version")]
     pub arbos_version: u64,
@@ -22,6 +22,16 @@ pub struct Setup {
     pub chain_id: u64,
     #[serde(default)]
     pub l1_initial_base_fee: Option<U256>,
+}
+
+impl Default for Setup {
+    fn default() -> Self {
+        Self {
+            arbos_version: default_arbos_version(),
+            chain_id: default_chain_id(),
+            l1_initial_base_fee: None,
+        }
+    }
 }
 
 fn default_arbos_version() -> u64 {
