@@ -14,14 +14,16 @@ use std::{
     path::PathBuf,
 };
 
-use alloy_primitives::{address, hex, Address, Bytes, B256, U256};
+use alloy_primitives::{address, hex, Address, Bytes, U256};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 use arb_storage::{set_account_code, ARBOS_STATE_ADDRESS};
 use arb_test_utils::harness::ArbosHarness;
-use arbos::arbos_state::initialize::{initialize_retryables, InitRetryableData};
+use arbos::arbos_state::initialize::{
+    initialize_retryables, InitRetryableData, GENESIS_PRECOMPILE_ADDRESSES,
+};
 
 // Canonical on-chain value at block 22,207,817 (verified via Alchemy
 // archive query at `0xa4b05fff…` slot offset 5). Today's
@@ -42,27 +44,6 @@ const ARB1_CHAIN_OWNER: Address = address!("d345e41ae2cb00311956aa7109fc801ae8c8
 // migration encoded a different value into its Type-11 init message.
 const DEFAULT_L1_INITIAL_BASE_FEE_WEI: u64 = 50_000_000_000;
 
-// The version-0 precompile addresses that Nitro's `InitializeArbosState`
-// stamps with `[0xFE]` code (arbos/arbosState/arbosstate.go:234-238). Classic
-// did not — so the user-account converter sees them as empty and skips them
-// — and we must emit them here.
-const GENESIS_PRECOMPILE_ADDRESSES: [Address; 14] = [
-    address!("0000000000000000000000000000000000000064"), // ArbSys
-    address!("0000000000000000000000000000000000000065"), // ArbInfo
-    address!("0000000000000000000000000000000000000066"), // ArbAddressTable
-    address!("0000000000000000000000000000000000000067"), // ArbBLS
-    address!("0000000000000000000000000000000000000068"), // ArbFunctionTable
-    address!("0000000000000000000000000000000000000069"), // ArbosTest
-    address!("000000000000000000000000000000000000006b"), // ArbOwnerPublic
-    address!("000000000000000000000000000000000000006c"), // ArbGasInfo
-    address!("000000000000000000000000000000000000006d"), // ArbAggregator
-    address!("000000000000000000000000000000000000006e"), // ArbRetryableTx
-    address!("000000000000000000000000000000000000006f"), // ArbStatistics
-    address!("0000000000000000000000000000000000000070"), // ArbOwner
-    address!("00000000000000000000000000000000000000ff"), // ArbDebug
-    address!("00000000000000000000000000000000000a4b05"), // ArbosActs
-];
-
 #[derive(Debug, clap::Args)]
 pub struct Arb1ArbosSynthesizeArgs {
     /// Foundation classic-export `addresstable.json` (one "0x..." per line).
@@ -73,9 +54,11 @@ pub struct Arb1ArbosSynthesizeArgs {
     #[arg(long)]
     pub retryables: PathBuf,
 
-    /// User-accounts JSONL (from `arb1-state-convert`). Used only to skip
-    /// emitting expired-retryable balance credits for addresses that
-    /// Nitro's `SetBalance` would clobber anyway (`initialize.go:178`).
+    /// User-accounts JSONL (from `arb1-state-convert`). Expired-retryable
+    /// beneficiary credits are only emitted for addresses NOT in this file,
+    /// mirroring the migration's later balance overwrite. The converter drops
+    /// empty accounts, so an empty-in-export beneficiary would still get a
+    /// credit line here; a wrong call is caught by the init-state root check.
     #[arg(long)]
     pub user_accounts: PathBuf,
 
@@ -129,9 +112,9 @@ pub fn run(args: Arb1ArbosSynthesizeArgs) -> Result<()> {
         .with_l1_initial_base_fee(initial_l1_base_fee)
         .initialize();
 
-    // Install the [0xFE] code marker on each v0 precompile (matches Nitro
-    // `arbosstate.go:236`). Bootstrap doesn't touch account code — that's a
-    // node-level concern, same as in `arb-node::initialize_arbos_state`.
+    // Install the [0xFE] code marker on each v0 precompile. Bootstrap doesn't
+    // touch account code — that's a node-level concern, same as arb-node's
+    // genesis init.
     {
         let state = harness.state();
         for addr in &GENESIS_PRECOMPILE_ADDRESSES {
@@ -139,10 +122,8 @@ pub fn run(args: Arb1ArbosSynthesizeArgs) -> Result<()> {
         }
     }
 
-    // Drive the remaining migration steps (these come from Nitro's
-    // `InitializeArbosInDatabase`, not `InitializeArbosState`): import
-    // address-table contents and retryables. Bootstrap has already added the
-    // initial chain owner, so we don't call `chain_owners.add` here.
+    // Import address-table contents and retryables. Bootstrap has already
+    // added the initial chain owner.
     let (balance_credits, escrow_credits) = {
         let state_ptr = harness.state_ptr();
         let arbos_state = harness.arbos_state();
@@ -232,15 +213,20 @@ pub fn run(args: Arb1ArbosSynthesizeArgs) -> Result<()> {
         arbos_storage_pairs.len()
     );
 
-    // 2. Precompile code markers.
+    // 2. Precompile code markers. reth's init-state does NOT merge duplicate
+    // addresses (later lines replace earlier ones in unspecified order), so a
+    // marker for an address that also has a user line would race it — refuse
+    // rather than emit a nondeterministic dump.
     let invalid_code = Bytes::from_static(&[0xFE]);
     let mut precompiles_emitted = 0;
     for addr in &GENESIS_PRECOMPILE_ADDRESSES {
-        // For addresses present in user accounts, the user's JSONL line has
-        // (possibly) balance/nonce; reth's init_from_state_dump treats a
-        // later line as an upsert. We emit code+0-balance and rely on the
-        // earlier user-line setting balance/nonce. If init-state errors on
-        // duplicate addresses we will merge in a follow-up.
+        if user_addresses.contains(addr) {
+            bail!(
+                "precompile {addr} also present in user accounts; merge the \
+                 code marker into the converted line instead of emitting a \
+                 duplicate"
+            );
+        }
         emit_account(&mut w, *addr, U256::ZERO, 0, Some(&invalid_code), &[])?;
         precompiles_emitted += 1;
     }
@@ -255,20 +241,28 @@ pub fn run(args: Arb1ArbosSynthesizeArgs) -> Result<()> {
     eprintln!("wrote {} escrow accounts", escrow_emitted);
 
     // 4. Expired-retryable beneficiary credits — only if not in user accounts
-    // (else Nitro's later SetBalance overwrites them anyway).
-    let mut credits_emitted = 0;
+    // (the migration's balance overwrite wins for those). Credits to the same
+    // beneficiary are summed into one line: init-state replaces duplicate
+    // addresses instead of merging them.
+    let mut aggregated: std::collections::BTreeMap<Address, U256> = Default::default();
     let mut credits_skipped = 0;
     for (addr, value) in &balance_credits {
         if user_addresses.contains(addr) {
             credits_skipped += 1;
             continue;
         }
+        let entry = aggregated.entry(*addr).or_default();
+        *entry = entry
+            .checked_add(*value)
+            .ok_or_else(|| anyhow!("beneficiary credit overflow for {addr}"))?;
+    }
+    for (addr, value) in &aggregated {
         emit_account(&mut w, *addr, *value, 0, None, &[])?;
-        credits_emitted += 1;
     }
     eprintln!(
         "wrote {} beneficiary credits (skipped {} overlapping user accounts)",
-        credits_emitted, credits_skipped
+        aggregated.len(),
+        credits_skipped
     );
 
     w.flush()?;
@@ -316,8 +310,6 @@ fn emit_account<W: Write>(
             entry.insert("storage".into(), Value::Object(s));
         }
     }
-    let _ = B256::ZERO; // silence unused import for some build configurations
-    let _ = json!({}); // silence unused import for some build configurations
     let is_empty = balance.is_zero()
         && nonce == 0
         && !entry.contains_key("code")

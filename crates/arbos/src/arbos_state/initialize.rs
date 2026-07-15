@@ -17,6 +17,27 @@ use crate::{
 
 use super::{ArbosState, ArbosStateError};
 
+/// Precompile addresses that exist at genesis (version 0).
+/// Only these get the `[0xFE]` invalid code marker at init time; later
+/// precompiles (ArbWasm, ArbWasmCache, …) get code when their activation
+/// version is reached during the upgrade path.
+pub const GENESIS_PRECOMPILE_ADDRESSES: [Address; 14] = [
+    alloy_primitives::address!("0000000000000000000000000000000000000064"), // ArbSys
+    alloy_primitives::address!("0000000000000000000000000000000000000065"), // ArbInfo
+    alloy_primitives::address!("0000000000000000000000000000000000000066"), // ArbAddressTable
+    alloy_primitives::address!("0000000000000000000000000000000000000067"), // ArbBLS
+    alloy_primitives::address!("0000000000000000000000000000000000000068"), // ArbFunctionTable
+    alloy_primitives::address!("0000000000000000000000000000000000000069"), // ArbosTest
+    alloy_primitives::address!("000000000000000000000000000000000000006b"), // ArbOwnerPublic
+    alloy_primitives::address!("000000000000000000000000000000000000006c"), // ArbGasInfo
+    alloy_primitives::address!("000000000000000000000000000000000000006d"), // ArbAggregator
+    alloy_primitives::address!("000000000000000000000000000000000000006e"), // ArbRetryableTx
+    alloy_primitives::address!("000000000000000000000000000000000000006f"), // ArbStatistics
+    alloy_primitives::address!("0000000000000000000000000000000000000070"), // ArbOwner
+    alloy_primitives::address!("00000000000000000000000000000000000000ff"), // ArbDebug
+    alloy_primitives::address!("00000000000000000000000000000000000a4b05"), // ArbosActs
+];
+
 /// Genesis data for a retryable ticket.
 #[derive(Debug, Clone)]
 pub struct InitRetryableData {

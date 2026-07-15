@@ -15,26 +15,7 @@ use arbos::{
 
 use crate::error::GenesisError;
 
-/// Precompile addresses that exist at genesis (version 0).
-/// Only these get the `[0xFE]` invalid code marker at init time.
-/// Later precompiles (ArbWasm, ArbWasmCache, etc.) get code when their
-/// ArbOS version is reached during the upgrade path.
-const GENESIS_PRECOMPILE_ADDRESSES: [Address; 14] = [
-    address!("0000000000000000000000000000000000000064"), // ArbSys
-    address!("0000000000000000000000000000000000000065"), // ArbInfo
-    address!("0000000000000000000000000000000000000066"), // ArbAddressTable
-    address!("0000000000000000000000000000000000000067"), // ArbBLS
-    address!("0000000000000000000000000000000000000068"), // ArbFunctionTable
-    address!("0000000000000000000000000000000000000069"), // ArbosTest
-    address!("000000000000000000000000000000000000006b"), // ArbOwnerPublic
-    address!("000000000000000000000000000000000000006c"), // ArbGasInfo
-    address!("000000000000000000000000000000000000006d"), // ArbAggregator
-    address!("000000000000000000000000000000000000006e"), // ArbRetryableTx
-    address!("000000000000000000000000000000000000006f"), // ArbStatistics
-    address!("0000000000000000000000000000000000000070"), // ArbOwner
-    address!("00000000000000000000000000000000000000ff"), // ArbDebug
-    address!("00000000000000000000000000000000000a4b05"), // ArbosActs
-];
+use arbos::arbos_state::initialize::GENESIS_PRECOMPILE_ADDRESSES;
 
 /// The initial ArbOS version for Arbitrum Sepolia genesis.
 /// The upgrade_arbos_version path handles stepping through all intermediate versions.

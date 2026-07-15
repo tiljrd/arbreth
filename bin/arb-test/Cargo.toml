@@ -16,7 +16,6 @@ arb-spec-tests = { workspace = true }
 arb-storage = { workspace = true }
 arb-test-utils = { workspace = true }
 arbos = { workspace = true }
-revm-database = { workspace = true }
 
 alloy-primitives = { workspace = true, features = ["std", "serde"] }
 alloy-consensus = { workspace = true }

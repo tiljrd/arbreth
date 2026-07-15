@@ -183,9 +183,9 @@ fn geth_account_to_jsonl(addr_key: &str, acct: &Value) -> Result<Option<String>>
             let val = v
                 .as_str()
                 .ok_or_else(|| anyhow!("storage value for {k} is not a string"))?;
-            let val = pad_b256(val);
+            let val = pad_b256(val)?;
             if val != ZERO_B256 {
-                out.insert(pad_b256(k), Value::String(val));
+                out.insert(pad_b256(k)?, Value::String(val));
             }
         }
         if !out.is_empty() {
@@ -224,11 +224,18 @@ pub(crate) fn decimal_or_hex_to_0x(s: &str) -> Result<String> {
     Ok(format!("0x{v:x}"))
 }
 
-/// Left-pad a hex value to a 32-byte `0x`-prefixed word.
-pub(crate) fn pad_b256(s: &str) -> String {
+/// Left-pad a hex value to a 32-byte `0x`-prefixed word. Errors on values
+/// longer than 32 bytes or containing non-hex digits — truncating or
+/// misparsing a storage key/value would silently corrupt the produced state.
+pub(crate) fn pad_b256(s: &str) -> Result<String> {
     let h = s.trim_start_matches("0x").trim_start_matches("0X");
-    let h = if h.len() > 64 { &h[h.len() - 64..] } else { h };
-    format!("0x{:0>64}", h.to_ascii_lowercase())
+    if h.len() > 64 {
+        bail!("hex value longer than 32 bytes: {s}");
+    }
+    if !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("invalid hex value: {s}");
+    }
+    Ok(format!("0x{:0>64}", h.to_ascii_lowercase()))
 }
 
 pub(crate) fn with_0x(s: &str) -> String {
@@ -266,6 +273,16 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pad_b256_pads_and_rejects_bad_input() {
+        assert_eq!(
+            pad_b256("0x2a").unwrap(),
+            "0x000000000000000000000000000000000000000000000000000000000000002a"
+        );
+        assert!(pad_b256(&format!("0x1{}", "0".repeat(64))).is_err());
+        assert!(pad_b256("0xzz").is_err());
+    }
 
     #[test]
     fn converts_eoa_with_decimal_balance() {

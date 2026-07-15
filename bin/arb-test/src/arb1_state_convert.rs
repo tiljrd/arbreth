@@ -148,9 +148,9 @@ fn classic_account_to_jsonl(acct: &ClassicAccount) -> Result<Option<String>> {
         if let Some(storage) = &ci.contract_storage {
             let mut out = Map::new();
             for (k, v) in storage {
-                let padded_v = pad_b256(v);
+                let padded_v = pad_b256(v)?;
                 if padded_v != ZERO_B256 {
-                    out.insert(pad_b256(k), Value::String(padded_v));
+                    out.insert(pad_b256(k)?, Value::String(padded_v));
                 }
             }
             if !out.is_empty() {

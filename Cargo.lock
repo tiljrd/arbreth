@@ -1527,7 +1527,6 @@ dependencies = [
  "base64 0.22.1",
  "clap 4.5.60",
  "hex",
- "revm-database",
  "serde",
  "serde_json",
  "ureq",
