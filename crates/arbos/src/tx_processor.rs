@@ -137,7 +137,7 @@ impl TxProcessor {
         gas_price: U256,
         collect_tips_enabled: bool,
     ) -> U256 {
-        if arbos_version >= arb_ver::ARBOS_VERSION_TIME_PASSED_AS_TIME {
+        if arbos_version >= arb_ver::ARBOS_VERSION_3 {
             self.get_paid_gas_price_with_collect(
                 arbos_version,
                 base_fee,

@@ -333,9 +333,14 @@ fn gas_check(
         return Err(PrecompileError::OutOfGas);
     }
     match result {
-        Err(PrecompileError::Other(_)) if ctx.block.arbos_version() >= 11 => Ok(
-            PrecompileOutput::new_reverted(gas_used.min(gas_limit), Default::default()),
-        ),
+        Err(PrecompileError::Other(_))
+            if ctx.block.arbos_version() >= arb_chainspec::arbos_version::ARBOS_VERSION_11 =>
+        {
+            Ok(PrecompileOutput::new_reverted(
+                gas_used.min(gas_limit),
+                Default::default(),
+            ))
+        }
         other => other,
     }
 }

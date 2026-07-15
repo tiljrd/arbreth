@@ -92,79 +92,105 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             read_l1_amortized_cost_cap_bips(&mut input, &mut gas_used, ctx)
         }
         Calls::getL1FeesAvailable(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 10, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_10, 0)
+            {
                 return r;
             }
             read_l1_fees_available(&mut input, &mut gas_used, ctx)
         }
         Calls::getL1RewardRate(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 11, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_11, 0)
+            {
                 return r;
             }
             read_l1_per_unit_reward(&mut input, &mut gas_used, ctx)
         }
         Calls::getL1RewardRecipient(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 11, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_11, 0)
+            {
                 return r;
             }
             read_l1_pay_rewards_to(&mut input, &mut gas_used, ctx)
         }
         Calls::getL1PricingEquilibrationUnits(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 20, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_20, 0)
+            {
                 return r;
             }
             read_l1_equilibration_units(&mut input, &mut gas_used, ctx)
         }
         Calls::getLastL1PricingUpdateTime(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 20, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_20, 0)
+            {
                 return r;
             }
             read_l1_last_update_time(&mut input, &mut gas_used, ctx)
         }
         Calls::getL1PricingFundsDueForRewards(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 20, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_20, 0)
+            {
                 return r;
             }
             read_l1_funds_due_for_rewards(&mut input, &mut gas_used, ctx)
         }
         Calls::getL1PricingUnitsSinceUpdate(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 20, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_20, 0)
+            {
                 return r;
             }
             read_l1_units_since_update(&mut input, &mut gas_used, ctx)
         }
         Calls::getLastL1PricingSurplus(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 20, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_20, 0)
+            {
                 return r;
             }
             read_l1_last_surplus(&mut input, &mut gas_used, ctx)
         }
         Calls::getMaxBlockGasLimit(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 50, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_50, 0)
+            {
                 return r;
             }
             read_l2_per_block_gas_limit(&mut input, &mut gas_used, ctx)
         }
         Calls::getMaxTxGasLimit(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 50, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_50, 0)
+            {
                 return r;
             }
             read_l2_per_tx_gas_limit(&mut input, &mut gas_used, ctx)
         }
         Calls::getGasPricingConstraints(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 50, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_50, 0)
+            {
                 return r;
             }
             handle_gas_pricing_constraints(&mut input, &mut gas_used, ctx)
         }
         Calls::getMultiGasPricingConstraints(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 60, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_60, 0)
+            {
                 return r;
             }
             handle_multi_gas_pricing_constraints(&mut input, &mut gas_used, ctx)
         }
         Calls::getMultiGasBaseFee(_) => {
-            if let Some(r) = crate::check_method_version(ctx, gas_limit, 60, 0) {
+            if let Some(r) =
+                crate::check_method_version(ctx, gas_limit, arb_ver::ARBOS_VERSION_60, 0)
+            {
                 return r;
             }
             handle_multi_gas_base_fee(&mut input, &mut gas_used, ctx)

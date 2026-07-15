@@ -542,7 +542,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
                 Ok(PrecompileOutput::new_reverted(0, output.bytes))
             } else {
                 let arbos_version = ctx.block.arbos_version();
-                if !is_read_only || arbos_version < 11 {
+                if !is_read_only || arbos_version < arb_chainspec::arbos_version::ARBOS_VERSION_11 {
                     emit_owner_acts(&mut input, &selector, data);
                 }
                 Ok(PrecompileOutput::new(0, output.bytes))
