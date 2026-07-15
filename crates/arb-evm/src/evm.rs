@@ -74,6 +74,18 @@ pub fn clear_l1_block_number_recorded() {
     L1_BLOCK_NUMBER_RECORDED.with(|c| c.set(None));
 }
 
+/// Clears the recorded L1 block number when dropped. Owned by the block
+/// executor so error returns and unwinds cannot leak a stale value onto a
+/// reused thread.
+#[derive(Debug, Default)]
+pub struct L1BlockNumberRecordedGuard;
+
+impl Drop for L1BlockNumberRecordedGuard {
+    fn drop(&mut self) {
+        clear_l1_block_number_recorded();
+    }
+}
+
 fn l1_block_number_recorded() -> Option<u64> {
     L1_BLOCK_NUMBER_RECORDED.with(|c| c.get())
 }
@@ -2556,5 +2568,23 @@ mod tests {
         factory.stage_ctx(Arc::new(arb_context::ArbPrecompileCtx::default()));
         assert!(clone.staged().is_some());
         assert!(Arc::ptr_eq(factory.chain_caches(), clone.chain_caches()));
+    }
+
+    #[test]
+    fn recorded_l1_guard_clears_on_drop_and_unwind() {
+        use super::{
+            l1_block_number_recorded, set_l1_block_number_recorded, L1BlockNumberRecordedGuard,
+        };
+
+        set_l1_block_number_recorded(7);
+        drop(L1BlockNumberRecordedGuard);
+        assert_eq!(l1_block_number_recorded(), None);
+
+        let _ = std::panic::catch_unwind(|| {
+            set_l1_block_number_recorded(9);
+            let _guard = L1BlockNumberRecordedGuard;
+            panic!("unwind");
+        });
+        assert_eq!(l1_block_number_recorded(), None);
     }
 }

@@ -172,6 +172,7 @@ impl<R, Spec, EvmF> ArbBlockExecutorFactory<R, Spec, EvmF> {
             multi_gas_current_fees: std::sync::OnceLock::new(),
             state_overlay: StateOverlay::new(),
             multi_gas_sink: crate::multi_gas::MultiGasSink::default(),
+            _l1_recorded_guard: crate::evm::L1BlockNumberRecordedGuard::default(),
         }
     }
 }
@@ -241,6 +242,7 @@ where
             multi_gas_current_fees: std::sync::OnceLock::new(),
             state_overlay: StateOverlay::new(),
             multi_gas_sink: crate::multi_gas::MultiGasSink::default(),
+            _l1_recorded_guard: crate::evm::L1BlockNumberRecordedGuard::default(),
         }
     }
 }
@@ -338,6 +340,8 @@ pub struct ArbBlockExecutor<'a, Evm, Spec, R: ReceiptBuilder> {
     /// per-dimension gas to. Empty unless a [`MultiGasInspector`] is installed,
     /// in which case it drives the v60 multi-gas backlog.
     multi_gas_sink: crate::multi_gas::MultiGasSink,
+    /// Clears the recorded L1 height on drop, covering error and unwind paths.
+    _l1_recorded_guard: crate::evm::L1BlockNumberRecordedGuard,
 }
 
 impl<'a, Evm, Spec, R: ReceiptBuilder> ArbBlockExecutor<'a, Evm, Spec, R> {
@@ -3216,9 +3220,6 @@ where
     }
 
     fn finish(self) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
-        // Drop the per-block thread-local so subsequent blocks fall back to
-        // the BlockEnv-derived L1 height until their own StartBlock fires.
-        crate::evm::clear_l1_block_number_recorded();
         // Log if expected balance delta is non-zero (deposits/withdrawals occurred).
         if self.expected_balance_delta != 0 {
             tracing::trace!(
