@@ -2922,20 +2922,18 @@ where
                         let db: &mut State<DB> = self.inner.evm_mut().db_mut();
                         apply_fee_distribution(db, overlay, dist, None);
                     }
-                    // Only mark a fee-distribution destination as touched when
-                    // the mint actually carried value. A no-op mint (amount=0
-                    // or a zero-address recipient) shouldn't create an empty
-                    // trie tombstone — Nitro's MintBalance is gated on amount,
-                    // and our apply_balance_op short-circuits the zero path.
+                    // Touch gates mirror the mint gates: the network fee is
+                    // minted only when non-zero, the infra fee whenever the
+                    // account is set (even zero), the poster fee always. A
+                    // zero-amount mint still EIP-161-touches its destination,
+                    // so a present-empty leaf there must be pruned.
                     if !dist.network_fee_amount.is_zero() {
                         self.touched_accounts.insert(dist.network_fee_account);
                     }
-                    if !dist.infra_fee_amount.is_zero() && dist.infra_fee_account != Address::ZERO {
+                    if dist.infra_fee_account != Address::ZERO {
                         self.touched_accounts.insert(dist.infra_fee_account);
                     }
-                    if !dist.poster_fee_amount.is_zero() {
-                        self.touched_accounts.insert(dist.poster_fee_destination);
-                    }
+                    self.touched_accounts.insert(dist.poster_fee_destination);
 
                     let arbos_version_active = self.arb_ctx.arbos_version;
                     let basefee_active = self.arb_ctx.basefee;
@@ -3490,8 +3488,8 @@ fn apply_fee_distribution<DB: Database>(
     dist: &EndTxFeeDistribution,
     l1_pricing: Option<&l1_pricing::L1PricingState<DB>>,
 ) {
-    // Skip the 0-value mint to avoid an EIP-161 touch on the network
-    // fee account.
+    // The network fee is minted only when non-zero, the infra fee whenever
+    // the account is set (even zero), the poster fee unconditionally.
     if !dist.network_fee_amount.is_zero() {
         let _ = arb_util::mint_balance(
             &dist.network_fee_account,
@@ -3499,9 +3497,12 @@ fn apply_fee_distribution<DB: Database>(
             |f, t, a| apply_balance_op(state, overlay, f, t, a),
         );
     }
-    let _ = arb_util::mint_balance(&dist.infra_fee_account, dist.infra_fee_amount, |f, t, a| {
-        apply_balance_op(state, overlay, f, t, a)
-    });
+    if dist.infra_fee_account != Address::ZERO {
+        let _ =
+            arb_util::mint_balance(&dist.infra_fee_account, dist.infra_fee_amount, |f, t, a| {
+                apply_balance_op(state, overlay, f, t, a)
+            });
+    }
     let _ = arb_util::mint_balance(
         &dist.poster_fee_destination,
         dist.poster_fee_amount,
