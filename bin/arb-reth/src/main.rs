@@ -69,7 +69,7 @@ fn run_offline(sub: &str) -> eyre::Result<()> {
     let _ = args.next();
     let argv: Vec<_> = std::iter::once(bin).chain(args).collect();
 
-    let _guard = RethTracer::new().init().ok().flatten();
+    let _guard = RethTracer::new().init().ok();
 
     let runner = CliRunner::try_default_runtime()?;
     let runtime = runner.runtime();

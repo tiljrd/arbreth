@@ -224,6 +224,7 @@ fn v60_internal_tx_start_block_writes_canonical_slots() {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: extra.into(),
     };
     let mut executor = cfg

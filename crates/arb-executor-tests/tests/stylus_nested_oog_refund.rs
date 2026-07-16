@@ -240,6 +240,7 @@ fn nested_upfront_oog_under_stylus_earns_no_refund() {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: vec![0u8; 32].into(),
     };
     let mut executor = cfg
@@ -291,7 +292,7 @@ fn nested_upfront_oog_under_stylus_earns_no_refund() {
     let result = executor
         .execute_transaction_without_commit(Recovered::new_unchecked(tx, SENDER))
         .expect("user tx");
-    let gas_used = result.result.result.gas_used();
+    let gas_used = result.result.result.tx_gas_used();
     executor.commit_transaction(result).expect("commit user tx");
     let _ = executor.finish().expect("finish");
 

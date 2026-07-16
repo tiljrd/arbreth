@@ -145,13 +145,9 @@ impl revm::context_interface::Transaction for ArbTransaction {
     }
 }
 
-impl reth_evm::TransactionEnv for ArbTransaction {
+impl alloy_evm::TransactionEnvMut for ArbTransaction {
     fn set_gas_limit(&mut self, gas_limit: u64) {
         self.0.gas_limit = gas_limit;
-    }
-
-    fn nonce(&self) -> u64 {
-        self.0.nonce
     }
 
     fn set_nonce(&mut self, nonce: u64) {

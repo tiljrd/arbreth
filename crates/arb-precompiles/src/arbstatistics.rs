@@ -2,7 +2,7 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolInterface;
 use arb_context::ArbPrecompileCtx;
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::interfaces::IArbStatistics;
@@ -17,7 +17,7 @@ const COPY_GAS: u64 = 3;
 
 pub fn create_arbstatistics_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbstatistics"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -53,7 +53,7 @@ fn handle_get_stats(
     input: &PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     // Five Classic-era stats stay zero post-migration; only block number is live.
     let block_number = U256::from(ctx.block.l2_block_number);
     let mut out = Vec::with_capacity(192);
@@ -62,8 +62,5 @@ fn handle_get_stats(
         out.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
     }
     crate::charge_computation(gas_used, ctx, 6 * COPY_GAS);
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(input.gas),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(input.gas), out.into()))
 }

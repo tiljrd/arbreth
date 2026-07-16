@@ -135,6 +135,7 @@ fn arb_executor_executes_signed_legacy_transfer() {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: extra.into(),
     };
 
