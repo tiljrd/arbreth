@@ -43,7 +43,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Bootstrap CI + synthetic generators + prewarm alloc
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
-rand_chacha = "0.3"
+rand_chacha = "0.9"
 
 # Process info for RSS
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
