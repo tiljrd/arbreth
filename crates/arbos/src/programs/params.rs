@@ -197,11 +197,10 @@ impl StylusParams {
         }
 
         match new_arbos_version {
-            ARBOS_VERSION_50 => {
-                if self.max_stack_depth > ARBOS_50_MAX_STACK_DEPTH {
+            ARBOS_VERSION_50
+                if self.max_stack_depth > ARBOS_50_MAX_STACK_DEPTH => {
                     self.max_stack_depth = ARBOS_50_MAX_STACK_DEPTH;
                 }
-            }
             ARBOS_VERSION_40 => {
                 if self.version != 2 {
                     return Err(ProgramsError::InvalidParamsUpgrade(
