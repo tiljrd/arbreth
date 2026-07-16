@@ -79,7 +79,6 @@ pub fn write_storage_at<D: Database>(
     slot: U256,
     value: U256,
 ) -> Result<(), StorageError> {
-    use revm_database::states::StorageSlot;
 
     ensure_cache_account(state, account);
 
@@ -147,15 +146,18 @@ pub fn write_storage_at<D: Database>(
             "write_storage_at applying transition"
         );
     }
-    let mut storage_changes: revm_database::StorageWithOriginalValues = HashMap::default();
-    storage_changes.insert(slot, StorageSlot::new_changed(original_value, value));
+    let mut storage_changes: revm::state::EvmStorage = HashMap::default();
+    storage_changes.insert(
+        slot,
+        revm::state::EvmStorageSlot::new_changed(original_value, value, revm::state::TransactionId::ZERO),
+    );
 
     let transition = revm::database::TransitionAccount {
         info,
         status: current_status,
         previous_info,
         previous_status,
-        storage: storage_changes,
+        storage: Some(std::borrow::Cow::Owned(storage_changes)),
         storage_was_destroyed: false,
     };
 
@@ -219,7 +221,7 @@ pub fn set_account_nonce<D: Database>(
         status: current_status,
         previous_info,
         previous_status,
-        storage: HashMap::default(),
+        storage: None,
         storage_was_destroyed: false,
     };
     state.apply_transition(vec![(addr, transition)]);
@@ -266,7 +268,7 @@ pub fn set_account_code<D: Database>(
         status: current_status,
         previous_info,
         previous_status,
-        storage: HashMap::default(),
+        storage: None,
         storage_was_destroyed: false,
     };
     state.apply_transition(vec![(addr, transition)]);

@@ -1,6 +1,6 @@
-# Vendored alloy-evm 0.36.0
+# Vendored alloy-evm 0.37.1
 
-Vendored copy of the crates.io `alloy-evm 0.36.0` release, applied workspace-wide
+Vendored copy of the crates.io `alloy-evm 0.37.1` release, applied workspace-wide
 via `[patch.crates-io]` in the root `Cargo.toml`.
 
 ## Why
