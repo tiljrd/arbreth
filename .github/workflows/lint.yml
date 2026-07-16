@@ -13,7 +13,7 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - name: Init submodules with retry
@@ -38,7 +38,7 @@ jobs:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - name: Init submodules with retry
@@ -67,7 +67,7 @@ jobs:
       # Treat any rustdoc warning as an error, including broken intra-doc links.
       RUSTDOCFLAGS: "-D warnings"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - name: Init submodules with retry
@@ -91,7 +91,7 @@ jobs:
     name: no hand-written selectors
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail if any bare [u8; 4] selector literals are reintroduced
         run: |
           set -e
@@ -108,7 +108,7 @@ jobs:
     name: no thread_local in arb-precompiles
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail if any thread_local! macro is reintroduced into arb-precompiles
         run: |
           set -e
@@ -126,7 +126,7 @@ jobs:
     name: no static state in arb-precompiles
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail if any static Mutex/RwLock/OnceCell is declared in arb-precompiles
         run: |
           set -e
@@ -144,7 +144,7 @@ jobs:
     name: no Result<_, ()> in core crates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail if any Result<_, ()> is reintroduced
         run: |
           set -e
@@ -164,7 +164,7 @@ jobs:
     name: no Result<_, String> in core crates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail if any Result<_, String> is reintroduced (PrecompileProvider trait excluded)
         run: |
           set -e
@@ -186,7 +186,7 @@ jobs:
     name: no unsafe mut-deref in arb-evm
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail if any unsafe { &mut * } is reintroduced into arb-evm/src
         run: |
           set -e
@@ -203,7 +203,7 @@ jobs:
     name: no *mut State cast outside arb-stylus
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail if any `as *mut State<` cast appears outside crates/arb-stylus/
         run: |
           set -e
@@ -221,7 +221,7 @@ jobs:
     name: no _via_backend suffix
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail if any *_via_backend symbol is reintroduced
         run: |
           set -e
@@ -238,7 +238,7 @@ jobs:
     name: no ACTIVE_CTX helpers
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail if any ACTIVE_CTX helper is reintroduced
         run: |
           set -e
