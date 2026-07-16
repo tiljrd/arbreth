@@ -53,17 +53,17 @@ fn fixture(v: u64) -> PrecompileTest {
 // ── Owner-gating: caller not in chain_owners reverts ────────────────
 
 #[test]
-fn caller_not_owner_propagates_revert_err() {
-    // verify_owner returns Err on non-owner — the dispatcher uses `?` so
-    // the error escapes before the post-call wrapper would have converted
-    // it via `gas_check`. The result reaches the caller as Err.
+fn caller_not_owner_halts() {
+    // verify_owner rejects non-owners; the escape surfaces as a burn-all
+    // halt-status output rather than an `Err` (which is reserved for fatal
+    // infrastructure failures).
     let run = PrecompileTest::new()
         .arbos_version(30)
         .caller(INTRUDER)
         .arbos_state()
         .gas(50_000)
         .call(arbowner, &calldata("getNetworkFeeAccount()", &[]));
-    assert!(run.result.is_err());
+    run.assert_halt();
 }
 
 // ── Body returns gas, dispatcher overrides to 0 ─────────────────────
