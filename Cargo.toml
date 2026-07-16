@@ -197,7 +197,7 @@ nitro-arbutil = { package = "arbutil", git = "https://github.com/OffchainLabs/ni
 
 # Transitive deps for Nitro crates
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
-wasmparser = "0.121"
+wasmparser = "0.245"
 ruint2 = "1.9.0"
 
 # Test deps
