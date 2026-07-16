@@ -102,6 +102,7 @@ fn apply_pre_execution_propagates_db_failure() {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: extra.into(),
     };
 

@@ -48,6 +48,7 @@ fn pre_execution_sources_chain_id_from_cfg_when_defaulted() {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: vec![0u8; 32].into(),
     };
     // A chain id of 0 mirrors the trait `create_executor` path used by re-execute.

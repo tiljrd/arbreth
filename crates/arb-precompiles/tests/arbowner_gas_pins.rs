@@ -89,7 +89,7 @@ fn get_infra_fee_account_below_v5_reverts_burning_gas_limit() {
         .gas(50_000)
         .call(arbowner, &calldata("getInfraFeeAccount()", &[]));
     let out = run.assert_ok();
-    assert!(out.reverted);
+    assert!(out.is_revert());
     assert_eq!(out.gas_used, 50_000);
 }
 
@@ -242,7 +242,7 @@ fn set_gas_backlog_below_v50_reverts_burning_gas_limit() {
         &calldata("setGasBacklog(uint64)", &[word_u256(U256::from(1u64))]),
     );
     let out = run.assert_ok();
-    assert!(out.reverted);
+    assert!(out.is_revert());
     assert_eq!(out.gas_used, 50_000);
 }
 

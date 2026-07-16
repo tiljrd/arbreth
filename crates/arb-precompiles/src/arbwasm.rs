@@ -4,10 +4,10 @@ use alloy_sol_types::{SolError, SolEvent, SolInterface};
 use arb_context::ArbPrecompileCtx;
 use arb_storage::ARBOS_STATE_ADDRESS;
 use arbos::programs::{hours_since_arbitrum, hours_to_age, params::StylusParams, Program};
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
-use crate::{interfaces::IArbWasm, ArbPrecompileError};
+use crate::{error::try_or_halt, interfaces::IArbWasm, ArbPrecompileError};
 
 /// ArbWasm precompile address (0x71).
 pub const ARBWASM_ADDRESS: Address = Address::new([
@@ -30,7 +30,7 @@ const COST_SCALAR_PERCENT: u64 = 2;
 
 pub fn create_arbwasm_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbwasm"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -75,8 +75,14 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
 
     use IArbWasm::ArbWasmCalls as Calls;
     match &call {
-        Calls::activateProgram(c) => return handle_activate_program(input, ctx, c.program),
-        Calls::codehashKeepalive(c) => return handle_codehash_keepalive(input, ctx, c.codehash),
+        Calls::activateProgram(c) => {
+            return handle_activate_program(input, ctx, c.program)
+                .or_else(ArbPrecompileError::into_halt_result)
+        }
+        Calls::codehashKeepalive(c) => {
+            return handle_codehash_keepalive(input, ctx, c.codehash)
+                .or_else(ArbPrecompileError::into_halt_result)
+        }
         _ => {}
     }
 
@@ -85,15 +91,15 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
 
     let result = match call {
         Calls::stylusVersion(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(params.version))
         }
         Calls::inkPrice(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(params.ink_price))
         }
         Calls::maxStackDepth(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             ok_u256(
                 &mut gas_used,
                 ctx,
@@ -102,31 +108,28 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             )
         }
         Calls::freePages(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(params.free_pages))
         }
         Calls::pageGas(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(params.page_gas))
         }
         Calls::pageRamp(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(params.page_ramp))
         }
         Calls::pageLimit(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(params.page_limit))
         }
         Calls::minInitGas(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             if ctx.block.arbos_version
                 < arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS_CHARGING_FIXES
             {
                 let pre_revert_gas = (SLOAD_GAS + WARM_SLOAD_GAS).min(input.gas);
-                return Ok(PrecompileOutput::new_reverted(
-                    pre_revert_gas,
-                    Default::default(),
-                ));
+                return Ok(crate::revert_output(pre_revert_gas, Default::default()));
             }
             let init = (params.min_init_gas as u64).saturating_mul(MIN_INIT_GAS_UNITS);
             let cached = (params.min_cached_init_gas as u64).saturating_mul(MIN_CACHED_GAS_UNITS);
@@ -139,7 +142,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             )
         }
         Calls::initCostScalar(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             let scalar = params.init_cost_scalar as u64;
             ok_u256(
                 &mut gas_used,
@@ -149,7 +152,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             )
         }
         Calls::expiryDays(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             ok_u256(
                 &mut gas_used,
                 ctx,
@@ -158,7 +161,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             )
         }
         Calls::keepaliveDays(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             ok_u256(
                 &mut gas_used,
                 ctx,
@@ -167,7 +170,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             )
         }
         Calls::blockCacheSize(_) => {
-            let params = load_params(&mut input, &mut gas_used, ctx)?;
+            let params = try_or_halt!(load_params(&mut input, &mut gas_used, ctx));
             ok_u256(
                 &mut gas_used,
                 ctx,
@@ -184,24 +187,28 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             ) {
                 return r;
             }
-            load_arbos(&mut input)?;
+            try_or_halt!(load_arbos(&mut input));
             let internals = input.internals_mut();
-            let arb_state = ctx
+            let arb_state = try_or_halt!(ctx
                 .block
                 .arbos_state(internals)
-                .map_err(ArbPrecompileError::fatal)?;
-            let gas = arb_state
+                .map_err(ArbPrecompileError::fatal));
+            let gas = try_or_halt!(arb_state
                 .programs
                 .activation_gas(internals)
-                .map_err(ArbPrecompileError::fatal)?;
+                .map_err(ArbPrecompileError::fatal));
             crate::charge_storage_read(&mut gas_used, ctx, SLOAD_GAS);
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(gas))
         }
         Calls::codehashVersion(c) => {
             const LOOKUP_GAS: u64 = SLOAD_GAS + WARM_SLOAD_GAS + SLOAD_GAS + COPY_GAS;
 
-            let (params, program) =
-                load_params_and_program(&mut input, ctx, &mut gas_used, c.codehash)?;
+            let (params, program) = try_or_halt!(load_params_and_program(
+                &mut input,
+                ctx,
+                &mut gas_used,
+                c.codehash
+            ));
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -209,15 +216,19 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
                 input.gas,
                 LOOKUP_GAS,
             ) {
-                return r;
+                return r.or_else(ArbPrecompileError::into_halt_result);
             }
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(program.version))
         }
         Calls::codehashAsmSize(c) => {
             const LOOKUP_GAS: u64 = SLOAD_GAS + WARM_SLOAD_GAS + SLOAD_GAS + COPY_GAS;
 
-            let (params, program) =
-                load_params_and_program(&mut input, ctx, &mut gas_used, c.codehash)?;
+            let (params, program) = try_or_halt!(load_params_and_program(
+                &mut input,
+                ctx,
+                &mut gas_used,
+                c.codehash
+            ));
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -225,7 +236,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
                 input.gas,
                 LOOKUP_GAS,
             ) {
-                return r;
+                return r.or_else(ArbPrecompileError::into_halt_result);
             }
             ok_u256(
                 &mut gas_used,
@@ -235,9 +246,18 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             )
         }
         Calls::programVersion(c) => {
-            let codehash = get_account_codehash(&mut input, ctx, &mut gas_used, c.program)?;
-            let (params, program) =
-                load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
+            let codehash = try_or_halt!(get_account_codehash(
+                &mut input,
+                ctx,
+                &mut gas_used,
+                c.program
+            ));
+            let (params, program) = try_or_halt!(load_params_and_program(
+                &mut input,
+                ctx,
+                &mut gas_used,
+                codehash
+            ));
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -245,14 +265,23 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
                 input.gas,
                 PROGRAM_LOOKUP_GAS,
             ) {
-                return r;
+                return r.or_else(ArbPrecompileError::into_halt_result);
             }
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(program.version))
         }
         Calls::programInitGas(c) => {
-            let codehash = get_account_codehash(&mut input, ctx, &mut gas_used, c.program)?;
-            let (params, program) =
-                load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
+            let codehash = try_or_halt!(get_account_codehash(
+                &mut input,
+                ctx,
+                &mut gas_used,
+                c.program
+            ));
+            let (params, program) = try_or_halt!(load_params_and_program(
+                &mut input,
+                ctx,
+                &mut gas_used,
+                codehash
+            ));
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -260,7 +289,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
                 input.gas,
                 PROGRAM_LOOKUP_GAS,
             ) {
-                return r;
+                return r.or_else(ArbPrecompileError::into_halt_result);
             }
 
             let mut init_gas = program.init_gas(&params);
@@ -278,9 +307,18 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             )
         }
         Calls::programMemoryFootprint(c) => {
-            let codehash = get_account_codehash(&mut input, ctx, &mut gas_used, c.program)?;
-            let (params, program) =
-                load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
+            let codehash = try_or_halt!(get_account_codehash(
+                &mut input,
+                ctx,
+                &mut gas_used,
+                c.program
+            ));
+            let (params, program) = try_or_halt!(load_params_and_program(
+                &mut input,
+                ctx,
+                &mut gas_used,
+                codehash
+            ));
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -288,14 +326,23 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
                 input.gas,
                 PROGRAM_LOOKUP_GAS,
             ) {
-                return r;
+                return r.or_else(ArbPrecompileError::into_halt_result);
             }
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(program.footprint))
         }
         Calls::programTimeLeft(c) => {
-            let codehash = get_account_codehash(&mut input, ctx, &mut gas_used, c.program)?;
-            let (params, program) =
-                load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
+            let codehash = try_or_halt!(get_account_codehash(
+                &mut input,
+                ctx,
+                &mut gas_used,
+                c.program
+            ));
+            let (params, program) = try_or_halt!(load_params_and_program(
+                &mut input,
+                ctx,
+                &mut gas_used,
+                codehash
+            ));
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -303,7 +350,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
                 input.gas,
                 PROGRAM_LOOKUP_GAS,
             ) {
-                return r;
+                return r.or_else(ArbPrecompileError::into_halt_result);
             }
 
             let expiry_seconds = (params.expiry_days as u64) * 24 * 3600;
@@ -406,7 +453,7 @@ fn validate_active_program(
     expiry_days: u16,
     gas_limit: u64,
     lookup_gas: u64,
-) -> Result<(), PrecompileResult> {
+) -> Result<(), crate::ArbPrecompileResult> {
     if program.version == 0 {
         let data = IArbWasm::ProgramNotActivated {}.abi_encode();
         return Err(revert_with_payload(data, lookup_gas, gas_limit));
@@ -431,10 +478,14 @@ fn validate_active_program(
 }
 
 /// Revert with `lookup_gas + CopyGas * ceil(payload_len / 32)` charged.
-fn revert_with_payload(payload: Vec<u8>, lookup_gas: u64, gas_limit: u64) -> PrecompileResult {
+fn revert_with_payload(
+    payload: Vec<u8>,
+    lookup_gas: u64,
+    gas_limit: u64,
+) -> crate::ArbPrecompileResult {
     let result_cost = COPY_GAS.saturating_mul((payload.len() as u64).div_ceil(32));
     let gas_used = lookup_gas.saturating_add(result_cost);
-    Ok(PrecompileOutput::new_reverted(
+    Ok(crate::revert_output(
         gas_used.min(gas_limit),
         payload.into(),
     ))
@@ -447,9 +498,9 @@ fn ok_u256(
     ctx: &ArbPrecompileCtx,
     gas_limit: u64,
     value: U256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         value.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -461,15 +512,12 @@ fn ok_two_u256(
     gas_limit: u64,
     a: U256,
     b: U256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let mut out = Vec::with_capacity(64);
     out.extend_from_slice(&a.to_be_bytes::<32>());
     out.extend_from_slice(&b.to_be_bytes::<32>());
     crate::charge_computation(gas_used, ctx, 2 * COPY_GAS);
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn div_ceil(a: u64, b: u64) -> u64 {
@@ -480,7 +528,7 @@ fn handle_activate_program(
     mut input: PrecompileInput<'_>,
     ctx: &ArbPrecompileCtx,
     program_address: Address,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     const ACTIVATION_UPFRONT_GAS: u64 = 1_659_168;
 
     let mut gas_used = 0u64;
@@ -572,7 +620,7 @@ fn handle_activate_program(
         if arbos_v < arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS_CONTRACT_LIMIT
             || arb_stylus::is_stylus_fragment(&code_bytes)
         {
-            return Ok(PrecompileOutput::new_reverted(
+            return Ok(crate::revert_output(
                 gas_used.min(input.gas),
                 Default::default(),
             ));
@@ -638,7 +686,7 @@ fn handle_activate_program(
         Err(_) => {
             // Reconstruction and decompression failures surface as non-solidity
             // errors, which revert with empty data and no result-copy charge.
-            return Ok(PrecompileOutput::new_reverted(
+            return Ok(crate::revert_output(
                 gas_used.min(input.gas),
                 Default::default(),
             ));
@@ -662,7 +710,7 @@ fn handle_activate_program(
         Ok(info) => info,
         Err(_) => {
             crate::charge_computation(&mut gas_used, ctx, gas_available);
-            return Err(ArbPrecompileError::empty_revert(gas_used).into());
+            return Err(ArbPrecompileError::empty_revert(gas_used));
         }
     };
 
@@ -816,16 +864,16 @@ fn handle_activate_program(
     crate::charge_computation(&mut gas_used, ctx, return_gas);
 
     if gas_used > input.gas {
-        return Err(ArbPrecompileError::OutOfGas.into());
+        return Err(ArbPrecompileError::OutOfGas);
     }
-    Ok(PrecompileOutput::new(gas_used, return_data.into()))
+    Ok(crate::output(gas_used, return_data.into()))
 }
 
 fn handle_codehash_keepalive(
     mut input: PrecompileInput<'_>,
     ctx: &ArbPrecompileCtx,
     codehash: B256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let mut gas_used = 0u64;
     let args_cost = COPY_GAS * (input.data.len() as u64).saturating_sub(4).div_ceil(32);
     crate::charge_l2_calldata(&mut gas_used, ctx, args_cost);
@@ -982,9 +1030,9 @@ fn handle_codehash_keepalive(
     ));
 
     if gas_used > input.gas {
-        return Err(ArbPrecompileError::OutOfGas.into());
+        return Err(ArbPrecompileError::OutOfGas);
     }
-    Ok(PrecompileOutput::new(gas_used, Vec::new().into()))
+    Ok(crate::output(gas_used, Vec::new().into()))
 }
 
 #[cfg(test)]

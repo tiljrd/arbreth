@@ -104,6 +104,7 @@ fn run(call_target: Address) -> (bool, u64) {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: vec![0u8; 32].into(),
     };
     let mut executor = cfg
@@ -129,7 +130,7 @@ fn run(call_target: Address) -> (bool, u64) {
         .expect("execute tx");
     (
         exec_result.result.result.is_success(),
-        exec_result.result.result.gas_used(),
+        exec_result.result.result.tx_gas_used(),
     )
 }
 

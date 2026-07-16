@@ -15,7 +15,7 @@ pub const ARBOSACTS_ADDRESS: Address = Address::new([
 
 pub fn create_arbosacts_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbosacts"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -41,4 +41,5 @@ fn handler(input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> PrecompileResu
         IArbosActs::CallerNotArbOS {}.abi_encode(),
         gas_limit,
     )
+    .or_else(crate::ArbPrecompileError::into_halt_result)
 }

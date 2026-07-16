@@ -23,6 +23,8 @@ fn fresh_state() -> State<EmptyDb> {
 fn provisional_header() -> Header {
     Header {
         parent_hash: B256::ZERO,
+        block_access_list_hash: None,
+        slot_number: None,
         ommers_hash: alloy_consensus::EMPTY_OMMER_ROOT_HASH,
         beneficiary: Address::ZERO,
         state_root: B256::ZERO,
@@ -93,6 +95,7 @@ fn arb_executor_constructs_via_factory() {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: extra.into(),
     };
     let _executor = cfg
@@ -149,6 +152,7 @@ fn arb_executor_apply_pre_execution_on_harness_state() {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: extra.into(),
     };
 

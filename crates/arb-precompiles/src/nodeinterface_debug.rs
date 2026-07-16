@@ -2,7 +2,7 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolInterface;
 use arb_context::ArbPrecompileCtx;
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::interfaces::INodeInterfaceDebug;
@@ -17,7 +17,7 @@ const COPY_GAS: u64 = 3;
 
 pub fn create_nodeinterface_debug_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("nodeinterfacedebug"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -40,12 +40,12 @@ fn handler(input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> PrecompileResu
 
 /// Returns a well-formed empty `RetryableInfo` — bridge tooling gets a valid
 /// ABI response; populating it requires RPC-layer state access.
-fn handle_get_retryable(input: &PrecompileInput<'_>) -> PrecompileResult {
+fn handle_get_retryable(input: &PrecompileInput<'_>) -> crate::ArbPrecompileResult {
     let mut out = vec![0u8; 7 * 32 + 32];
     U256::from(7u64 * 32)
         .to_be_bytes::<32>()
         .iter()
         .enumerate()
         .for_each(|(i, b)| out[6 * 32 + i] = *b);
-    Ok(PrecompileOutput::new(COPY_GAS.min(input.gas), out.into()))
+    Ok(crate::output(COPY_GAS.min(input.gas), out.into()))
 }

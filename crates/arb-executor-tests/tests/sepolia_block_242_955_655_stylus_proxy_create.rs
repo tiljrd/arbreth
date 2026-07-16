@@ -273,6 +273,7 @@ fn run_scenario(activated_at_hours: u32) -> ScenarioOutcome {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: vec![0u8; 32].into(),
     };
     let mut executor = cfg
@@ -290,7 +291,7 @@ fn run_scenario(activated_at_hours: u32) -> ScenarioOutcome {
         .execute_transaction_without_commit(recovered)
         .expect("execute tx");
 
-    let gas_used = exec_result.result.result.gas_used();
+    let gas_used = exec_result.result.result.tx_gas_used();
     let success = exec_result.result.result.is_success();
 
     ScenarioOutcome { success, gas_used }
