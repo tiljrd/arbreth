@@ -79,7 +79,6 @@ pub fn write_storage_at<D: Database>(
     slot: U256,
     value: U256,
 ) -> Result<(), StorageError> {
-
     ensure_cache_account(state, account);
 
     let current_value = {
@@ -152,7 +151,11 @@ pub fn write_storage_at<D: Database>(
     let mut storage_changes: revm::state::EvmStorage = HashMap::default();
     storage_changes.insert(
         slot,
-        revm::state::EvmStorageSlot::new_changed(prev_value, value, revm::state::TransactionId::ZERO),
+        revm::state::EvmStorageSlot::new_changed(
+            prev_value,
+            value,
+            revm::state::TransactionId::ZERO,
+        ),
     );
 
     let transition = revm::database::TransitionAccount {

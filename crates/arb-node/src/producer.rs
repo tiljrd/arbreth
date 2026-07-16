@@ -1045,9 +1045,8 @@ where
                 Default::default(),
             ));
 
-            let (root, updates) =
-                crate::launcher::compute_overlay_state_root(overlay, prefix_sets)
-                    .map_err(|e| BlockProducerError::Execution(format!("state root: {e}")))?;
+            let (root, updates) = crate::launcher::compute_overlay_state_root(overlay, prefix_sets)
+                .map_err(|e| BlockProducerError::Execution(format!("state root: {e}")))?;
 
             let mut new_acc_nodes = (*acc_arc.nodes).clone();
             new_acc_nodes.extend_ref_and_sort(&updates.clone_into_sorted());
@@ -1150,9 +1149,9 @@ where
         // Buffer block in memory for batched persistence.
         {
             use alloy_evm::block::BlockExecutionResult;
-            use reth_trie::ComputedTrieData;
             use reth_execution_types::BlockExecutionOutput;
             use reth_primitives_traits::RecoveredBlock;
+            use reth_trie::ComputedTrieData;
 
             let recovered = Arc::new(RecoveredBlock::new_sealed(sealed.clone(), vec![]));
             let exec_output = Arc::new(BlockExecutionOutput {

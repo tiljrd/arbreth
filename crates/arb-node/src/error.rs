@@ -5,8 +5,8 @@
 //! genesis initializer with concrete typed variants.
 
 use arbos::arbos_state::ArbosStateError;
-use reth_storage_errors::provider::ProviderError;
 use reth_execution_errors::StateRootError;
+use reth_storage_errors::provider::ProviderError;
 
 /// Errors surfaced by the `arb-node` launcher infrastructure.
 #[derive(Debug, thiserror::Error)]

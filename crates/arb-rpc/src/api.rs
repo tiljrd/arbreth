@@ -27,9 +27,7 @@ use reth_tasks::{
     pool::{BlockingTaskGuard, BlockingTaskPool},
     Runtime,
 };
-use reth_transaction_pool::{
-    AddedTransactionOutcome, PoolTx, TransactionOrigin,
-};
+use reth_transaction_pool::{AddedTransactionOutcome, PoolTx, TransactionOrigin};
 use tracing::trace;
 
 use arb_storage::{
