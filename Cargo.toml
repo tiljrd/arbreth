@@ -147,7 +147,7 @@ revm = { version = "40.0", features = [
 ] }
 revm-database = { version = "15.0" }
 revm-database-interface = { version = "12.1" }
-revm-state = { version = "12.0" }
+revm-state = { version = "41.0" }
 revm-primitives = { version = "24.0" }
 revm-interpreter = { version = "37.0" }
 revm-context = { version = "18.0" }
