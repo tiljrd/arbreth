@@ -208,6 +208,7 @@ fn rectify_chain_owner_matches_canonical() {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: vec![0u8; 32].into(),
     };
     let mut executor = cfg
@@ -257,7 +258,7 @@ fn rectify_chain_owner_matches_canonical() {
 
     let logs = result.result.result.logs().to_vec();
     let status = result.result.result.is_success();
-    let gas_used = result.result.result.gas_used();
+    let gas_used = result.result.result.tx_gas_used();
     executor.commit_transaction(result).expect("commit");
     let _ = executor.finish().expect("finish");
 

@@ -178,6 +178,7 @@ fn exec_ctx() -> EthBlockExecutionCtx<'static> {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: vec![0u8; 32].into(),
     }
 }
