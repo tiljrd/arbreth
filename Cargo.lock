@@ -1514,10 +1514,17 @@ dependencies = [
 name = "arb-test"
 version = "0.1.5"
 dependencies = [
+ "alloy-consensus",
  "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-eth",
  "anyhow",
  "arb-spec-tests",
+ "arb-storage",
  "arb-test-harness",
+ "arb-test-utils",
+ "arbos",
+ "base64 0.22.1",
  "clap 4.5.60",
  "hex",
  "serde",

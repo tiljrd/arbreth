@@ -420,6 +420,25 @@ mod tests {
     use base64::engine::general_purpose::STANDARD as B64;
 
     #[test]
+    fn message_index_maps_to_block_with_nonzero_genesis() {
+        // The node passes `genesis_header().number` (22207817 for arb1);
+        // message index i maps to block genesis + i.
+        let h = NitroExecutionHandler::<(), ()>::new((), Arc::new(()), 22_207_817);
+        assert_eq!(h.message_index_to_block_number(0), 22_207_817);
+        assert_eq!(h.message_index_to_block_number(1), 22_207_818);
+        assert_eq!(h.block_number_to_message_index(22_207_817), Some(0));
+        assert_eq!(h.block_number_to_message_index(22_207_818), Some(1));
+        assert_eq!(h.block_number_to_message_index(22_207_816), None);
+    }
+
+    #[test]
+    fn message_index_maps_identity_with_zero_genesis() {
+        let h = NitroExecutionHandler::<(), ()>::new((), Arc::new(()), 0);
+        assert_eq!(h.message_index_to_block_number(5), 5);
+        assert_eq!(h.block_number_to_message_index(5), Some(5));
+    }
+
+    #[test]
     fn decode_empty_option_is_ok() {
         assert_eq!(decode_l2_msg(&None).unwrap(), Vec::<u8>::new());
         assert_eq!(

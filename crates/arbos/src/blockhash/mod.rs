@@ -1,6 +1,7 @@
 use alloy_primitives::{keccak256, B256};
 use revm::Database;
 
+use arb_chainspec::arbos_version as arb_ver;
 use arb_storage::{Storage, StorageBackedUint64, StorageBackend, SystemStateBackend};
 
 mod error;
@@ -65,7 +66,7 @@ impl<D: Database> Blockhashes<'_, D> {
             next_number += 1;
 
             let mut next_num_buf = [0u8; 8];
-            if arbos_version >= 8 {
+            if arbos_version >= arb_ver::ARBOS_VERSION_L1_BLOCK_NUMBER_DIRECT {
                 next_num_buf.copy_from_slice(&next_number.to_le_bytes());
             }
 

@@ -172,6 +172,7 @@ impl<R, Spec, EvmF> ArbBlockExecutorFactory<R, Spec, EvmF> {
             multi_gas_current_fees: std::sync::OnceLock::new(),
             state_overlay: StateOverlay::new(),
             multi_gas_sink: crate::multi_gas::MultiGasSink::default(),
+            _l1_recorded_guard: crate::evm::L1BlockNumberRecordedGuard,
         }
     }
 }
@@ -241,6 +242,7 @@ where
             multi_gas_current_fees: std::sync::OnceLock::new(),
             state_overlay: StateOverlay::new(),
             multi_gas_sink: crate::multi_gas::MultiGasSink::default(),
+            _l1_recorded_guard: crate::evm::L1BlockNumberRecordedGuard,
         }
     }
 }
@@ -338,6 +340,8 @@ pub struct ArbBlockExecutor<'a, Evm, Spec, R: ReceiptBuilder> {
     /// per-dimension gas to. Empty unless a [`MultiGasInspector`] is installed,
     /// in which case it drives the v60 multi-gas backlog.
     multi_gas_sink: crate::multi_gas::MultiGasSink,
+    /// Clears the recorded L1 height on drop, covering error and unwind paths.
+    _l1_recorded_guard: crate::evm::L1BlockNumberRecordedGuard,
 }
 
 impl<'a, Evm, Spec, R: ReceiptBuilder> ArbBlockExecutor<'a, Evm, Spec, R> {
@@ -410,6 +414,7 @@ fn load_state_params<D: Database>(
 ) {
     let arbos_version = arb_state.arbos_version();
     arb_ctx.arbos_version = arbos_version;
+    precompile_ctx.block.set_arbos_version(arbos_version);
 
     // Reset per-tx scratch on the existing precompile ctx Arc rather than
     // allocating a new one. EVM-side precompile handler closures captured
@@ -1269,9 +1274,8 @@ where
             let tx_type = recovered.tx().tx_type();
             let mut tx_err = None;
 
-            if tx_data.len() >= 4 {
-                let selector: [u8; 4] = tx_data[0..4].try_into().unwrap();
-                let is_start_block = selector == internal_tx::INTERNAL_TX_START_BLOCK_METHOD_ID;
+            if let Some(selector) = tx_data.first_chunk::<4>() {
+                let is_start_block = *selector == internal_tx::INTERNAL_TX_START_BLOCK_METHOD_ID;
 
                 if is_start_block {
                     if let Ok(start_data) = internal_tx::decode_start_block_data(&tx_data) {
@@ -1390,6 +1394,14 @@ where
                     let state_ref = unsafe { arb_state.backing_storage.state_mut() };
                     if let Ok(l1_block_number) = arb_state.blockhashes.l1_block_number(state_ref) {
                         self.arb_ctx.l1_block_number = l1_block_number;
+                        // Surface the post-StartBlock storage value (pre-v8
+                        // it is the reported value + 1, which the header's
+                        // mix_hash-derived height lags) to precompiles and,
+                        // via the thread-local, to the EVM NUMBER opcode.
+                        self.precompile_ctx
+                            .block
+                            .set_l1_block_number_recorded(l1_block_number);
+                        crate::evm::set_l1_block_number_recorded(l1_block_number);
                     }
 
                     load_state_params(
@@ -1997,9 +2009,14 @@ where
             self.precompile_ctx.set_effective_gas_price(effective);
         }
 
-        // Effective tip per gas (per EIP-1559): min(max_priority_fee, max_fee - base_fee).
-        // This is what revm mints to coinbase. Used by commit_transaction to
-        // redirect coinbase tip to network when CollectTips() is true.
+        // Effective tip per gas — what revm mints to the coinbase. Used by
+        // commit_transaction to redirect the coinbase tip to the network fee
+        // account when CollectTips() is true. Legacy / EIP-2930 fold their
+        // entire gas_price-above-base-fee into the tip (revm reports no
+        // priority field); EIP-1559 / 7702 use the explicit priority capped at
+        // max_fee - base_fee. Collapsing the missing priority to 0 would leave a
+        // legacy tx's tip stranded on the coinbase instead of the network fee
+        // account whenever CollectTips is on (ArbOS >= 9).
         let effective_tip_per_gas: u128 = {
             let bf: u128 = self.arb_ctx.basefee.try_into().unwrap_or(u128::MAX);
             let max_fee: u128 = upfront_gas_price; // gas_price() returns max_fee_per_gas for EIP-1559
@@ -2167,7 +2184,12 @@ where
                 TxKind::Call(a) => Some(a),
                 _ => None,
             };
-            if to_addr == Some(arb_precompiles::ARBWASM_ADDRESS) {
+            // Read the block's live version: the map is (re)registered from
+            // the same source, so the stash is armed iff ArbWasm is
+            // dispatchable for this tx.
+            let arbwasm_active = self.precompile_ctx.block.arbos_version()
+                >= arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS;
+            if arbwasm_active && to_addr == Some(arb_precompiles::ARBWASM_ADDRESS) {
                 self.precompile_ctx.set_stylus_call_value(tx_value);
                 if tx_value > U256::ZERO {
                     tx_env.set_value(U256::ZERO);
@@ -2422,7 +2444,7 @@ where
         Ok(output)
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+    fn commit_transaction(&mut self, mut output: Self::Result) -> Result<u64, BlockExecutionError> {
         // Extract info needed for fee distribution before the output is consumed.
         let pending = self.pending_tx.take();
         let gas_used_total = output.result.result.gas_used();
@@ -2455,6 +2477,34 @@ where
             }
         }
 
+        // The tip is paid to the network fee account, not the block coinbase,
+        // but revm's `reward_beneficiary` still targets `block.beneficiary()`
+        // and EIP-3651 (Shanghai+) unconditionally warms it. Both leave an
+        // empty-touched coinbase entry in `output.result.state` even when the
+        // tip mint is zero; persisting it would emit a spurious state-trie
+        // deletion marker and break post-tx state-root parity. Drop it before
+        // commit when the touch carries no actual state change.
+        let coinbase = self.arb_ctx.coinbase;
+        let coinbase_unchanged_touch = output
+            .result
+            .state
+            .get(&coinbase)
+            .map(|acct| {
+                let info = &acct.info;
+                acct.is_touched()
+                    && !acct.is_selfdestructed()
+                    && info.balance.is_zero()
+                    && info.nonce == 0
+                    && info.code_hash
+                        == alloy_primitives::B256::from(alloy_primitives::keccak256([]))
+                    && acct.storage.is_empty()
+            })
+            .unwrap_or(false);
+        if coinbase_unchanged_touch {
+            output.result.state.remove(&coinbase);
+        }
+
+        // Capture EVM-modified addresses for dirty tracking before commit consumes output.
         for addr in output.result.state.keys() {
             self.touched_accounts.insert(*addr);
         }
@@ -2872,12 +2922,17 @@ where
                         let db: &mut State<DB> = self.inner.evm_mut().db_mut();
                         apply_fee_distribution(db, overlay, dist, None);
                     }
-                    // Skip the network-fee touch when compute cost is 0
-                    // (avoids a no-op EIP-161 touch).
+                    // Touch gates mirror the mint gates: the network fee is
+                    // minted only when non-zero, the infra fee whenever the
+                    // account is set (even zero), the poster fee always. A
+                    // zero-amount mint still EIP-161-touches its destination,
+                    // so a present-empty leaf there must be pruned.
                     if !dist.network_fee_amount.is_zero() {
                         self.touched_accounts.insert(dist.network_fee_account);
                     }
-                    self.touched_accounts.insert(dist.infra_fee_account);
+                    if dist.infra_fee_account != Address::ZERO {
+                        self.touched_accounts.insert(dist.infra_fee_account);
+                    }
                     self.touched_accounts.insert(dist.poster_fee_destination);
 
                     let arbos_version_active = self.arb_ctx.arbos_version;
@@ -3042,16 +3097,30 @@ where
         // Our zombie_accounts set approximates this — if a zombie is subsequently
         // dirtied by a non-zero transfer, it's removed from zombie_accounts
         // (matching Go's dirtyCount > zombieEntries check).
+        let log_touched =
+            tracing::enabled!(target: "arb::executor::touched", tracing::Level::TRACE);
+        let touched_snapshot: Vec<Address> = if log_touched {
+            self.touched_accounts.iter().copied().collect()
+        } else {
+            Vec::new()
+        };
+        let block_num_for_log = self.arb_ctx.l2_block_number;
+        let mut filter_reason: Vec<(Address, &'static str)> = Vec::new();
         {
             let keccak_empty = alloy_primitives::B256::from(alloy_primitives::keccak256([]));
             let overlay = &mut self.state_overlay;
             let db: &mut State<DB> = self.inner.evm_mut().db_mut();
+            let trace_filter =
+                tracing::enabled!(target: "arb::executor::eip161", tracing::Level::TRACE);
             let to_remove: Vec<Address> = self
                 .touched_accounts
                 .drain()
                 .filter(|addr| {
                     // Zombie accounts must be preserved even if empty.
                     if self.zombie_accounts.contains(addr) {
+                        if trace_filter {
+                            filter_reason.push((*addr, "zombie-preserved"));
+                        }
                         return false;
                     }
                     if let Some(cached) = db.cache.accounts.get(addr) {
@@ -3059,12 +3128,54 @@ where
                             let is_empty = acct.info.nonce == 0
                                 && acct.info.balance.is_zero()
                                 && acct.info.code_hash == keccak_empty;
+                            if trace_filter {
+                                filter_reason.push((
+                                    *addr,
+                                    if is_empty {
+                                        "empty-delete"
+                                    } else {
+                                        "non-empty-kept"
+                                    },
+                                ));
+                            }
                             return is_empty;
                         }
+                        if trace_filter {
+                            filter_reason.push((*addr, "cache-some-account-none"));
+                        }
+                    } else if trace_filter {
+                        filter_reason.push((*addr, "not-in-cache"));
                     }
                     false
                 })
                 .collect();
+
+            if log_touched {
+                let deleted: std::collections::HashSet<Address> =
+                    to_remove.iter().copied().collect();
+                let kept: Vec<Address> = touched_snapshot
+                    .iter()
+                    .filter(|a| !deleted.contains(*a))
+                    .copied()
+                    .collect();
+                tracing::trace!(
+                    target: "arb::executor::touched",
+                    block = block_num_for_log,
+                    touched_count = touched_snapshot.len(),
+                    deleted_count = to_remove.len(),
+                    kept = ?kept,
+                    deleted = ?to_remove,
+                    "post-tx touched-set"
+                );
+            }
+            if trace_filter {
+                tracing::trace!(
+                    target: "arb::executor::eip161",
+                    block = block_num_for_log,
+                    reasons = ?filter_reason,
+                    "EIP-161 filter outcomes"
+                );
+            }
 
             // Mark deleted accounts non-existent in the cache instead of
             // removing them. Removing the entry would let the next same-block
@@ -3238,8 +3349,22 @@ fn apply_balance_op<DB: Database>(
     amount: U256,
 ) -> Result<(), BalanceError> {
     if amount.is_zero() {
+        // A zero-amount credit must still touch an empty destination (the
+        // EIP-161 emptiness touch): per-tx Finalise then prunes it, and on
+        // pre-Stylus versions a later zombie resurrection can re-create it as
+        // an empty leaf. Without the touch the account never materialises,
+        // never enters `finalise_deleted`, and the zombie leaf is lost. The
+        // debit side does not touch; its pre-Stylus zombie handling is done
+        // by `create_zombie_if_deleted` at the call sites.
+        if let Some(to_addr) = to {
+            touch_account_if_empty(state, overlay, *to_addr);
+        }
         return Ok(());
     }
+    tracing::trace!(
+        target: "arb::executor::balance",
+        from = ?from, to = ?to, amount = %amount, "balance op"
+    );
     match (from, to) {
         (Some(from_addr), Some(to_addr)) => {
             let available = get_balance(state, *from_addr);
@@ -3262,6 +3387,44 @@ fn apply_balance_op<DB: Database>(
         (None, None) => {}
     }
     Ok(())
+}
+
+/// Materialise `addr` as an empty account when it is currently empty or
+/// missing, mirroring Go's `stateObject.AddBalance(0)` EIP-161 touch (which
+/// runs after `getOrNewStateObject` has created the object). A non-empty target
+/// is left untouched, matching Go's `if s.empty()` guard. The caller is
+/// responsible for adding `addr` to `touched_accounts` so the per-tx Finalise
+/// considers it for pruning.
+fn touch_account_if_empty<DB: Database>(
+    state: &mut State<DB>,
+    overlay: &mut StateOverlay,
+    addr: Address,
+) {
+    overlay.record_pre_touch(state, addr);
+    let keccak_empty = alloy_primitives::B256::from(alloy_primitives::keccak256([]));
+    let materialise = match state.cache.accounts.get(&addr) {
+        Some(cached) => match &cached.account {
+            Some(acct) => {
+                acct.info.nonce == 0
+                    && acct.info.balance.is_zero()
+                    && acct.info.code_hash == keccak_empty
+            }
+            None => true,
+        },
+        None => true,
+    };
+    if !materialise {
+        return;
+    }
+    if let Some(cached) = state.cache.accounts.get_mut(&addr) {
+        if cached.account.is_none() {
+            cached.account = Some(revm_database::states::plain_account::PlainAccount {
+                info: revm_state::AccountInfo::default(),
+                storage: Default::default(),
+            });
+            cached.status = revm_database::AccountStatus::InMemoryChange;
+        }
+    }
 }
 
 /// Increment the nonce of an account.
@@ -3325,8 +3488,8 @@ fn apply_fee_distribution<DB: Database>(
     dist: &EndTxFeeDistribution,
     l1_pricing: Option<&l1_pricing::L1PricingState<DB>>,
 ) {
-    // Skip the 0-value mint to avoid an EIP-161 touch on the network
-    // fee account.
+    // The network fee is minted only when non-zero, the infra fee whenever
+    // the account is set (even zero), the poster fee unconditionally.
     if !dist.network_fee_amount.is_zero() {
         let _ = arb_util::mint_balance(
             &dist.network_fee_account,
@@ -3334,9 +3497,12 @@ fn apply_fee_distribution<DB: Database>(
             |f, t, a| apply_balance_op(state, overlay, f, t, a),
         );
     }
-    let _ = arb_util::mint_balance(&dist.infra_fee_account, dist.infra_fee_amount, |f, t, a| {
-        apply_balance_op(state, overlay, f, t, a)
-    });
+    if dist.infra_fee_account != Address::ZERO {
+        let _ =
+            arb_util::mint_balance(&dist.infra_fee_account, dist.infra_fee_amount, |f, t, a| {
+                apply_balance_op(state, overlay, f, t, a)
+            });
+    }
     let _ = arb_util::mint_balance(
         &dist.poster_fee_destination,
         dist.poster_fee_amount,

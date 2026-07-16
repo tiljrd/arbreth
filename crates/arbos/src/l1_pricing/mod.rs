@@ -6,6 +6,7 @@ pub use error::L1PricingError;
 
 use alloy_primitives::{Address, U256};
 
+use arb_chainspec::arbos_version as arb_ver;
 use arb_storage::{
     Storage, StorageBackedAddress, StorageBackedBigInt, StorageBackedBigUint, StorageBackedInt64,
     StorageBackedUint64, StorageBackend, SystemStateBackend,
@@ -283,8 +284,10 @@ impl<'a, D> L1PricingState<'a, D> {
         magnitude: U256,
         negative: bool,
     ) -> Result<(), L1PricingError> {
-        if self.arbos_version < 7 {
-            return Ok(());
+        if self.arbos_version < arb_ver::ARBOS_VERSION_LAST_SURPLUS_SIGNED {
+            // Pre-v7 stores the magnitude only, discarding the sign.
+            let _ = negative;
+            return Ok(self.last_surplus.set(backend, magnitude)?);
         }
         if negative {
             Ok(self.last_surplus.set_negative(backend, magnitude)?)
@@ -458,23 +461,223 @@ impl<'a, D> L1PricingState<'a, D> {
         TX_DATA_NON_ZERO_GAS_EIP2028.saturating_mul(l1_bytes)
     }
 
-    fn _preversion10_update(
+    /// Pre-v10 batch poster spending update.
+    ///
+    /// Differs from the v≥10 path in two important ways:
+    /// (1) reads/writes the *real* `L1PricerFundsPoolAddress` ETH balance via
+    /// `balance_fn` + `transfer_fn` instead of the tracked
+    /// `l1_fees_available` slot (which doesn't exist pre-v10);
+    /// (2) the price-adjustment surplus is computed from
+    /// `pool_balance - (total_funds_due + funds_due_for_rewards)`.
+    fn _preversion10_update<F, G, B>(
         &self,
-        _update_time: u64,
-        _current_time: u64,
-        _wei_spent: U256,
-        _l1_basefee: U256,
-    ) -> Result<(), L1PricingError> {
+        backend: &mut B,
+        update_time: u64,
+        current_time: u64,
+        batch_poster: Address,
+        mut wei_spent: U256,
+        l1_basefee: U256,
+        transfer_fn: &mut F,
+        balance_fn: &mut G,
+    ) -> Result<(), L1PricingError>
+    where
+        F: FnMut(Address, Address, U256) -> Result<(), BalanceError>,
+        G: FnMut(Address) -> U256,
+        B: StorageBackend,
+    {
+        if self.arbos_version < arb_ver::ARBOS_VERSION_POSTER_FUNDS_TO_POOL {
+            return self._preversion2_update(
+                backend,
+                update_time,
+                current_time,
+                batch_poster,
+                wei_spent,
+                transfer_fn,
+                balance_fn,
+            );
+        }
+
+        let bpt = self.batch_poster_table();
+        let poster_state = bpt.open_poster(backend, batch_poster, true)?;
+
+        let mut funds_due_for_rewards = self.funds_due_for_rewards(backend)?;
+
+        let mut last_update_time = self.last_update_time(backend)?;
+        if last_update_time == 0 && update_time > 0 {
+            last_update_time = update_time - 1;
+        }
+        if update_time > current_time || update_time < last_update_time {
+            return Err(L1PricingError::InvalidUpdateTime);
+        }
+
+        let raw_num = update_time - last_update_time;
+        let raw_denom = current_time - last_update_time;
+        let (alloc_num, alloc_denom) = if raw_denom == 0 {
+            (1u64, 1u64)
+        } else {
+            (raw_num, raw_denom)
+        };
+
+        // Allocate the fraction of accumulated units that maps to this update window.
+        let units_since = self.units_since_update(backend)?;
+        let units_allocated = units_since
+            .saturating_mul(alloc_num)
+            .checked_div(alloc_denom)
+            .unwrap_or(0);
+        self.set_units_since_update(backend, units_since.saturating_sub(units_allocated))?;
+
+        // Amortized-cost cap applies from v3+. Pre-v11 the stored cap is
+        // `u64::MAX`, so the cap never binds until v11 rewrites it.
+        if self.arbos_version >= arb_ver::ARBOS_VERSION_AMORTIZED_COST_CAP {
+            let cap_bips = self.amortized_cost_cap_bips(backend)?;
+            if cap_bips != 0 {
+                let cap = l1_basefee
+                    .saturating_mul(U256::from(units_allocated))
+                    .saturating_mul(U256::from(cap_bips))
+                    .checked_div(U256::from(10000u64))
+                    .unwrap_or(U256::MAX);
+                if cap < wei_spent {
+                    wei_spent = cap;
+                }
+            }
+        }
+
+        // Accrue the spending against the poster's FundsDue.
+        let due_to_poster = poster_state.funds_due(backend)?;
+        poster_state.set_funds_due(
+            backend,
+            due_to_poster.saturating_add(wei_spent),
+            &bpt.total_funds_due,
+        )?;
+
+        // Accrue this update's share of the reward to FundsDueForRewards.
+        let per_unit_reward = self.per_unit_reward(backend)?;
+        let reward_amount = U256::from(units_allocated).saturating_mul(U256::from(per_unit_reward));
+        funds_due_for_rewards = funds_due_for_rewards.saturating_add(reward_amount);
+        self.set_funds_due_for_rewards(backend, funds_due_for_rewards)?;
+
+        // Pay rewards from the L1PricerFundsPool. Pre-v10 uses the REAL pool balance
+        // as the rewards/refunds source — there is no `l1_fees_available` slot yet.
+        let mut available_funds = balance_fn(L1_PRICER_FUNDS_POOL_ADDRESS);
+        let mut payment_for_rewards = reward_amount;
+        if available_funds < payment_for_rewards {
+            payment_for_rewards = available_funds;
+        }
+        funds_due_for_rewards = funds_due_for_rewards.saturating_sub(payment_for_rewards);
+        self.set_funds_due_for_rewards(backend, funds_due_for_rewards)?;
+
+        let pay_rewards_to = self.pay_rewards_to(backend)?;
+        // Unconditional: a zero-amount payout still carries the EIP-161 touch
+        // and pre-Stylus zombie side effects on both accounts.
+        let _ = transfer_fn(
+            L1_PRICER_FUNDS_POOL_ADDRESS,
+            pay_rewards_to,
+            payment_for_rewards,
+        );
+        available_funds = balance_fn(L1_PRICER_FUNDS_POOL_ADDRESS);
+
+        // Settle outstanding FundsDue to the poster, as much as the pool allows.
+        let balance_due_to_poster = poster_state.funds_due(backend)?;
+        let mut balance_to_transfer = balance_due_to_poster;
+        if available_funds < balance_to_transfer {
+            balance_to_transfer = available_funds;
+        }
+        if balance_to_transfer > U256::ZERO {
+            let addr_to_pay = poster_state.pay_to(backend)?;
+            let _ = transfer_fn(
+                L1_PRICER_FUNDS_POOL_ADDRESS,
+                addr_to_pay,
+                balance_to_transfer,
+            );
+            poster_state.set_funds_due(
+                backend,
+                balance_due_to_poster.saturating_sub(balance_to_transfer),
+                &bpt.total_funds_due,
+            )?;
+        }
+
+        self.set_last_update_time(backend, update_time)?;
+
+        // Price adjustment: derivative-based update from the realised surplus.
+        if units_allocated > 0 {
+            let total_funds_due = bpt.total_funds_due(backend)?;
+            let fdr = self.funds_due_for_rewards(backend)?;
+            let pool_balance = balance_fn(L1_PRICER_FUNDS_POOL_ADDRESS);
+
+            let need = total_funds_due.saturating_add(fdr);
+            let (surplus_mag, surplus_positive) = if pool_balance >= need {
+                (pool_balance.saturating_sub(need), true)
+            } else {
+                (need.saturating_sub(pool_balance), false)
+            };
+
+            let inertia = self.inertia(backend)?;
+            let equil_units = self.equilibration_units(backend)?;
+            let inertia_units = equil_units
+                .checked_div(U256::from(inertia))
+                .unwrap_or(U256::ZERO);
+            let price = self.price_per_unit(backend)?;
+
+            let alloc_plus_inert = inertia_units.saturating_add(U256::from(units_allocated));
+            let (old_surplus_mag, old_surplus_neg) = self.last_surplus.get_signed(backend)?;
+
+            let units_u256 = U256::from(units_allocated);
+
+            // desired_derivative = -surplus / equilUnits
+            let (desired_mag, desired_pos) =
+                signed_div(surplus_mag, !surplus_positive, equil_units);
+
+            // actual_derivative = (surplus - oldSurplus) / unitsAllocated
+            let (diff_mag, diff_pos) = signed_sub(
+                surplus_mag,
+                surplus_positive,
+                old_surplus_mag,
+                !old_surplus_neg,
+            );
+            let (actual_mag, actual_pos) = signed_div(diff_mag, diff_pos, units_u256);
+
+            let (change_mag, change_pos) =
+                signed_sub(desired_mag, desired_pos, actual_mag, actual_pos);
+
+            let change_times_units = change_mag.saturating_mul(units_u256);
+            let (price_change, price_change_pos) =
+                signed_div(change_times_units, change_pos, alloc_plus_inert);
+
+            // SetLastSurplus uses the version-gated encoding: pre-v7 = unsigned magnitude;
+            // v>=7 = signed BigInt. `set_last_surplus` handles this internally.
+            self.set_last_surplus(backend, surplus_mag, !surplus_positive)?;
+
+            let new_price = if price_change_pos {
+                price.saturating_add(price_change)
+            } else {
+                price.saturating_sub(price_change)
+            };
+            self.set_price_per_unit(backend, new_price)?;
+        }
+
         Ok(())
     }
 
-    fn _preversion2_update(
+    /// Pre-v2 batch poster spending update.
+    ///
+    /// Deliberately a stub: v<2 uses a different per-poster iteration model,
+    /// and no production Arbitrum chain launched below v2 (arb1 started at
+    /// v6). Kept as a typed marker so the version dispatch stays exhaustive.
+    fn _preversion2_update<F, G, B>(
         &self,
+        _backend: &mut B,
         _update_time: u64,
         _current_time: u64,
+        _batch_poster: Address,
         _wei_spent: U256,
-        _l1_basefee: U256,
-    ) -> Result<(), L1PricingError> {
+        _transfer_fn: &mut F,
+        _balance_fn: &mut G,
+    ) -> Result<(), L1PricingError>
+    where
+        F: FnMut(Address, Address, U256) -> Result<(), BalanceError>,
+        G: FnMut(Address) -> U256,
+        B: StorageBackend,
+    {
         Ok(())
     }
 }
@@ -502,7 +705,7 @@ impl<D: revm::Database> L1PricingState<'_, D> {
     }
 
     /// Update pricing based on a batch poster spending report.
-    pub fn update_for_batch_poster_spending<F, B>(
+    pub fn update_for_batch_poster_spending<F, G, B>(
         &self,
         backend: &mut B,
         update_time: u64,
@@ -511,13 +714,24 @@ impl<D: revm::Database> L1PricingState<'_, D> {
         wei_spent: U256,
         l1_basefee: U256,
         mut transfer_fn: F,
+        mut balance_fn: G,
     ) -> Result<(), L1PricingError>
     where
         F: FnMut(Address, Address, U256) -> Result<(), BalanceError>,
+        G: FnMut(Address) -> U256,
         B: StorageBackend,
     {
-        if self.arbos_version < 10 {
-            return self._preversion10_update(update_time, current_time, wei_spent, l1_basefee);
+        if self.arbos_version < arb_ver::ARBOS_VERSION_L1_PRICING_FROM_POOL_SLOT {
+            return self._preversion10_update(
+                backend,
+                update_time,
+                current_time,
+                batch_poster,
+                wei_spent,
+                l1_basefee,
+                &mut transfer_fn,
+                &mut balance_fn,
+            );
         }
 
         let bpt = self.batch_poster_table();
@@ -551,7 +765,7 @@ impl<D: revm::Database> L1PricingState<'_, D> {
         self.set_units_since_update(backend, units_since.saturating_sub(units_allocated))?;
 
         let mut wei_spent = wei_spent;
-        if self.arbos_version >= 3 {
+        if self.arbos_version >= arb_ver::ARBOS_VERSION_AMORTIZED_COST_CAP {
             let cap_bips = self.amortized_cost_cap_bips(backend)?;
             if cap_bips != 0 {
                 let cap = l1_basefee
@@ -590,18 +804,15 @@ impl<D: revm::Database> L1PricingState<'_, D> {
         self.set_funds_due_for_rewards(backend, fdr_after)?;
 
         let pay_rewards_to = self.pay_rewards_to(backend)?;
-        if payment_for_rewards > U256::ZERO {
-            // payment_for_rewards was clamped to l1_fees just above, which mirrors
-            // the L1 pricer pool balance. A typed shortfall here would indicate
-            // pool/state drift and must not block the rest of the bookkeeping.
-            let _ = transfer_fn(
-                L1_PRICER_FUNDS_POOL_ADDRESS,
-                pay_rewards_to,
-                payment_for_rewards,
-            );
-            l1_fees = l1_fees.saturating_sub(payment_for_rewards);
-            self.set_l1_fees_available(backend, l1_fees)?;
-        }
+        // Unconditional: a zero-amount payout still carries the EIP-161 touch
+        // side effects on both accounts.
+        let _ = transfer_fn(
+            L1_PRICER_FUNDS_POOL_ADDRESS,
+            pay_rewards_to,
+            payment_for_rewards,
+        );
+        l1_fees = l1_fees.saturating_sub(payment_for_rewards);
+        self.set_l1_fees_available(backend, l1_fees)?;
 
         let balance_due = poster_state.funds_due(backend)?;
         let mut transfer_amount = balance_due;

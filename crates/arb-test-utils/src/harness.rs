@@ -18,9 +18,11 @@ pub struct ArbosHarness {
     state: Box<State<EmptyDb>>,
     arbos_version: u64,
     chain_id: u64,
-    network_fee_account: Address,
-    infra_fee_account: Address,
+    initial_chain_owner: Address,
+    genesis_block_num: u64,
+    serialized_chain_config: Vec<u8>,
     l1_initial_base_fee: U256,
+    network_fee_account: Option<Address>,
     initialized: bool,
 }
 
@@ -31,7 +33,8 @@ impl Default for ArbosHarness {
 }
 
 impl ArbosHarness {
-    /// Defaults: ArbOS v30, chain id 412346, L1 base fee 0.1 gwei.
+    /// Defaults: ArbOS v30, chain id 412346, L1 base fee 0.1 gwei, chain owner
+    /// = zero, genesis block 0, no serialized chain config.
     pub fn new() -> Self {
         let state = Box::new(
             StateBuilder::new()
@@ -43,9 +46,11 @@ impl ArbosHarness {
             state,
             arbos_version: 30,
             chain_id: 412346,
-            network_fee_account: Address::ZERO,
-            infra_fee_account: Address::ZERO,
+            initial_chain_owner: Address::ZERO,
+            genesis_block_num: 0,
+            serialized_chain_config: Vec::new(),
             l1_initial_base_fee: U256::from(100_000_000u64),
+            network_fee_account: None,
             initialized: false,
         }
     }
@@ -62,21 +67,49 @@ impl ArbosHarness {
         self
     }
 
-    pub fn with_network_fee_account(mut self, a: Address) -> Self {
-        assert!(!self.initialized, "set fee account before initialize()");
-        self.network_fee_account = a;
+    /// Initial chain owner. For ArbOS v >= 2, `bootstrap` also writes this as
+    /// the network fee account.
+    pub fn with_initial_chain_owner(mut self, a: Address) -> Self {
+        assert!(!self.initialized, "set chain owner before initialize()");
+        self.initial_chain_owner = a;
         self
     }
 
-    pub fn with_infra_fee_account(mut self, a: Address) -> Self {
-        assert!(!self.initialized, "set fee account before initialize()");
-        self.infra_fee_account = a;
+    /// On-chain genesis block (`chain_info.json::GenesisBlockNum`). Non-zero
+    /// for migrated chains (arb1 = 22207818); zero for fresh chains.
+    pub fn with_genesis_block_num(mut self, n: u64) -> Self {
+        assert!(
+            !self.initialized,
+            "set genesis block num before initialize()"
+        );
+        self.genesis_block_num = n;
+        self
+    }
+
+    /// `json.Marshal(*params.ChainConfig)` bytes stored at chain-config
+    /// subspace. Empty for fresh chains that don't derive a config from an
+    /// init message.
+    pub fn with_serialized_chain_config(mut self, bytes: Vec<u8>) -> Self {
+        assert!(!self.initialized, "set chain config before initialize()");
+        self.serialized_chain_config = bytes;
         self
     }
 
     pub fn with_l1_initial_base_fee(mut self, fee: U256) -> Self {
         assert!(!self.initialized, "set base fee before initialize()");
         self.l1_initial_base_fee = fee;
+        self
+    }
+
+    /// Override the network fee account. `bootstrap` defaults it to the chain
+    /// owner for ArbOS v >= 2; this applies the equivalent of a later
+    /// `ArbOwner.setNetworkFeeAccount` so tests can pin a distinct sink.
+    pub fn with_network_fee_account(mut self, a: Address) -> Self {
+        assert!(
+            !self.initialized,
+            "set network fee account before initialize()"
+        );
+        self.network_fee_account = Some(a);
         self
     }
 
@@ -88,13 +121,27 @@ impl ArbosHarness {
         bootstrap(
             &mut self.state,
             self.chain_id,
-            self.network_fee_account,
-            self.infra_fee_account,
+            self.initial_chain_owner,
+            self.genesis_block_num,
+            &self.serialized_chain_config,
             self.l1_initial_base_fee,
             self.arbos_version,
             SystemBurner::new(None, false),
         )
         .expect("bootstrap ArbOS state");
+
+        if let Some(account) = self.network_fee_account {
+            let state_ptr: *mut State<EmptyDb> = self.state.as_mut();
+            // SAFETY: single-threaded test setup; no other live borrow of `state`.
+            let state: &mut State<EmptyDb> = unsafe { &mut *state_ptr };
+            let arb_state =
+                ArbosState::open(state, SystemBurner::new(None, false)).expect("open arbos state");
+            // SAFETY: `arb_state` is the sole live handle for this write.
+            let backing = unsafe { arb_state.backing_storage.state_mut() };
+            arb_state
+                .set_network_fee_account(backing, account)
+                .expect("set network fee account");
+        }
 
         self.initialized = true;
         self

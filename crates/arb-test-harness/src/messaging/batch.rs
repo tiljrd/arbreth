@@ -23,6 +23,9 @@ pub struct BatchBuilder {
     pub timestamp: u64,
     pub request_seq: u64,
     pub base_fee_l1: u64,
+    /// Precomputed batch gas cost carried alongside the message; the
+    /// reference node refuses batch-posting reports without it.
+    pub batch_gas_cost: u64,
 }
 
 impl BatchBuilder {
@@ -53,6 +56,7 @@ impl MessageBuilder for BatchBuilder {
                 base_fee_l1: self.base_fee_l1,
             },
             l2_msg: crate::messaging::b64_l2_msg(&body.into()),
+            batch_gas_cost: Some(self.batch_gas_cost),
         })
     }
 }
@@ -76,6 +80,7 @@ mod tests {
             timestamp: 1_700_000_010,
             request_seq: 13,
             base_fee_l1: 30_000_000_000,
+            batch_gas_cost: 100_000,
         }
     }
 

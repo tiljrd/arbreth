@@ -39,6 +39,7 @@ impl MessageBuilder for DelayedTxBuilder {
                 base_fee_l1: self.base_fee_l1,
             },
             l2_msg: crate::messaging::b64_l2_msg(&body.into()),
+            batch_gas_cost: None,
         })
     }
 }

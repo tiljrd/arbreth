@@ -1,0 +1,107 @@
+# Arbitrum One stack — arbreth (with the imported Nitro migration genesis at
+# block 22,207,817) driven by an arb1 Nitro consensus sidecar.
+#
+# Differences from the Sepolia `docker-compose.yml`:
+#   - chain id 42161, parent chain = real mainnet
+#   - genesis/arbitrum-one.json (block 22,207,817 / state root 0x7f2bfc44…)
+#   - Foundation classic-export `nitro/classic-msg/` mount so Nitro can
+#     replay the pre-migration messages
+#   - the arbreth datadir must already contain an imported state (run
+#     `arb-reth init-state` first); the compose bind-mounts that datadir
+#     read-write so reth can open it in place
+#
+# Bring up:
+#   export DATA_DIR=/path/to/arb1/reth-db
+#   export FOUNDATION_NITRO_DIR=/path/to/classic-export/nitro
+#   export PARENT_CHAIN_RPC_URL=https://eth-mainnet.example/v2/<key>
+#   export PARENT_CHAIN_BEACON_URL=https://eth-mainnet.example/v2/<key>
+#   docker compose -f docker-compose.arb1.yml up
+
+services:
+  arbitrum-reth:
+    image: ghcr.io/0xbloctopus/arbitrum-reth:${ARBRETH_TAG:-latest}
+    pull_policy: missing
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arbreth-arb1
+    restart: "no"
+    ports:
+      - "8645:8545"
+      - "8651:8551"
+    volumes:
+      - ${DATA_DIR:?DATA_DIR must point to a datadir prepared with `arb-reth init-state`}:/data
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - ARB_BLOCK_BUFFER_SIZE=${ARB_BLOCK_BUFFER_SIZE:-128}
+      - ARB_FLUSH_INTERVAL=${ARB_FLUSH_INTERVAL:-128}
+    command:
+      - node
+      - --chain=/genesis/arbitrum-one.json
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=eth,web3,net,debug
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.port=8551
+      - --authrpc.jwtsecret=/data/jwt.hex
+      - --disable-discovery
+      - --log.stdout.filter=${RUST_LOG:-info}
+      - --db.exclusive=true
+      - --db.growth-step=4GB
+      - --db.log-level=error
+      - --db.sync-mode=safe-no-sync
+    networks:
+      - arb1-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - timeout 5 bash -c '</dev/tcp/localhost/8551' || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  nitro:
+    image: ${NITRO_IMAGE:-offchainlabs/nitro-node:v3.10.0-rc.10-b1cf6db}
+    container_name: nitro-arb1
+    user: root
+    entrypoint: /usr/local/bin/nitro
+    depends_on:
+      arbitrum-reth:
+        condition: service_healthy
+    restart: "no"
+    volumes:
+      - ${NITRO_DATA_DIR:-nitro-arb1-data}:/tmp/nitro-data
+      - ${DATA_DIR:?DATA_DIR must point to a datadir prepared with `arb-reth init-state`}:/arbitrum-reth-data:ro
+      # Foundation's classic-msg from classic-export.tar so Nitro can replay
+      # the pre-migration message history. We do NOT mount l2chaindata
+      # because Nitro v3.10 rejects it as an "unexpected file" — arbreth
+      # already carries the migrated state, so Nitro only needs classic-msg.
+      - ${FOUNDATION_NITRO_DIR:?FOUNDATION_NITRO_DIR must point to the extracted classic-export nitro dir}/classic-msg:/tmp/nitro-data/arbitrum/arb1/nitro/classic-msg:ro
+    command:
+      - --init.empty=true
+      - --init.validate-genesis-assertion=false
+      - --persistent.global-config=/tmp/nitro-data
+      - --persistent.chain=/tmp/nitro-data/arbitrum
+      - --parent-chain.connection.url=${PARENT_CHAIN_RPC_URL}
+      - --parent-chain.blob-client.beacon-url=${PARENT_CHAIN_BEACON_URL}
+      - --chain.id=42161
+      - --execution.forwarding-target=null
+      - --log-level=${LOG_LEVEL:-INFO}
+      - --node.execution-rpc-client.url=http://arbitrum-reth:8551
+      - --node.execution-rpc-client.jwtsecret=/arbitrum-reth-data/jwt.hex
+      - --node.sequencer=false
+      - --node.staker.enable=false
+      - --node.batch-poster.enable=false
+      - --node.feed.input.url=${FEED_URL:-wss://arb1-feed.arbitrum.io/feed}
+    networks:
+      - arb1-network
+
+volumes:
+  nitro-arb1-data:
+
+networks:
+  arb1-network:
+    name: arb1-network

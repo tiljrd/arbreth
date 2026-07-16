@@ -13,16 +13,43 @@ use revm::primitives::hardfork::SpecId;
 /// stored in the block header's mix_hash.
 pub mod arbos_version {
     pub const ARBOS_VERSION_2: u64 = 2;
+    /// Poster fee destination moves from coinbase to L1PricerFundsPoolAddress.
+    pub const ARBOS_VERSION_POSTER_FUNDS_TO_POOL: u64 = ARBOS_VERSION_2;
     pub const ARBOS_VERSION_3: u64 = 3;
+    /// StartBlock's `time_passed` switches from `l2_block_number` to real
+    /// elapsed seconds; L1 pricing begins applying `amortized_cost_cap_bips`.
+    pub const ARBOS_VERSION_TIME_PASSED_AS_TIME: u64 = ARBOS_VERSION_3;
+    pub const ARBOS_VERSION_AMORTIZED_COST_CAP: u64 = ARBOS_VERSION_3;
     pub const ARBOS_VERSION_4: u64 = 4;
+    /// L2->L1 forwarder return value switches from L1 block to L2 block.
+    pub const ARBOS_VERSION_L2_TO_L1_RETURN_L2BLOCK: u64 = ARBOS_VERSION_4;
     pub const ARBOS_VERSION_5: u64 = 5;
+    /// Infra fee account introduced; tx fees split between network + infra.
+    pub const ARBOS_VERSION_INFRA_FEE_SPLIT: u64 = ARBOS_VERSION_5;
     pub const ARBOS_VERSION_6: u64 = 6;
+    /// Arbitrum One's launch version. `ArbSys.IsTopLevel` switches from
+    /// `depth == 2` to `origin == Contracts[depth-2].Caller()` chain check.
+    pub const ARBOS_VERSION_IS_TOP_LEVEL_ORIGIN_CHECK: u64 = ARBOS_VERSION_6;
+    pub const ARBOS_VERSION_ARBITRUM_ONE_LAUNCH: u64 = ARBOS_VERSION_6;
     pub const ARBOS_VERSION_7: u64 = 7;
+    /// `LastSurplus` storage switches from unsigned-magnitude (pre-v7) to
+    /// the signed-encoding used by `StorageBackedSignedInt`.
+    pub const ARBOS_VERSION_LAST_SURPLUS_SIGNED: u64 = ARBOS_VERSION_7;
     pub const ARBOS_VERSION_8: u64 = 8;
+    /// `StartBlock` stops the pre-v8 `l1_block_number++` adjustment; the
+    /// L1 block number recorded matches the sequencer's value verbatim.
+    pub const ARBOS_VERSION_L1_BLOCK_NUMBER_DIRECT: u64 = ARBOS_VERSION_8;
     pub const ARBOS_VERSION_9: u64 = 9;
+    /// `drop_tip` always returns false; tips are always collected
+    /// (`GetPaidGasPrice` switches to returning `gasPrice` not `BaseFee`).
+    pub const ARBOS_VERSION_ALWAYS_COLLECT_TIPS: u64 = ARBOS_VERSION_9;
     /// Legacy CollectTips encoding (pre-v10 mix_hash layout).
     pub const ARBOS_VERSION_COLLECT_TIPS_OLD: u64 = ARBOS_VERSION_9;
     pub const ARBOS_VERSION_10: u64 = 10;
+    /// L1 pricing per-batch-poster spending switches from the legacy
+    /// `_preversion10_UpdateForBatchPosterSpending` path (live pool balance
+    /// via balance read) to the v10+ `l1_fees_available` slot path.
+    pub const ARBOS_VERSION_L1_PRICING_FROM_POOL_SLOT: u64 = ARBOS_VERSION_10;
     /// ArbOS version 11 — Shanghai EVM rules (PUSH0, etc.).
     pub const ARBOS_VERSION_11: u64 = 11;
     /// Gas for scheduled retry txs is subtracted from parent tx gas used.
@@ -56,6 +83,42 @@ pub mod arbos_version {
     pub const ARBOS_VERSION_60: u64 = 60;
     pub const ARBOS_VERSION_STYLUS_CONTRACT_LIMIT: u64 = ARBOS_VERSION_60;
     pub const ARBOS_VERSION_TRANSACTION_FILTERING: u64 = ARBOS_VERSION_60;
+
+    /// Version-gated precompile addresses and the ArbOS version that
+    /// activates them. Both precompile-map registration and the `[0xFE]`
+    /// code install during version upgrades read this table; a skew between
+    /// the two would be a consensus fork.
+    pub static PRECOMPILE_MIN_ARBOS_VERSIONS: &[(alloy_primitives::Address, u64)] = &[
+        (
+            // ArbWasm
+            alloy_primitives::address!("0000000000000000000000000000000000000071"),
+            ARBOS_VERSION_STYLUS,
+        ),
+        (
+            // ArbWasmCache
+            alloy_primitives::address!("0000000000000000000000000000000000000072"),
+            ARBOS_VERSION_STYLUS,
+        ),
+        (
+            // ArbNativeTokenManager
+            alloy_primitives::address!("0000000000000000000000000000000000000073"),
+            ARBOS_VERSION_41,
+        ),
+        (
+            // ArbFilteredTransactionsManager
+            alloy_primitives::address!("0000000000000000000000000000000000000074"),
+            ARBOS_VERSION_TRANSACTION_FILTERING,
+        ),
+    ];
+
+    /// Activation version for a version-banded precompile; `None` for
+    /// addresses that are always registered.
+    pub fn precompile_min_arbos_version(addr: alloy_primitives::Address) -> Option<u64> {
+        PRECOMPILE_MIN_ARBOS_VERSIONS
+            .iter()
+            .find(|(a, _)| *a == addr)
+            .map(|(_, v)| *v)
+    }
 }
 
 /// Trait for Arbitrum chain specifications.
@@ -66,7 +129,12 @@ pub trait ArbitrumChainSpec {
     /// Returns the chain ID.
     fn chain_id(&self) -> u64;
 
-    /// Maps a timestamp to the appropriate SpecId.
+    /// Maps a timestamp to a `SpecId`.
+    ///
+    /// Not on the execution path: block execution selects the EVM spec from
+    /// the header's ArbOS version via [`spec_id_by_arbos_version`], which is
+    /// authoritative and chain-agnostic. This method only encodes Arbitrum
+    /// Sepolia's schedule and must not be relied on for other chains.
     fn spec_id_by_timestamp(&self, timestamp: u64) -> SpecId;
 
     /// Maps an ArbOS version to the appropriate SpecId.

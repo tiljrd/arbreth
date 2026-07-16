@@ -96,4 +96,13 @@ pub enum ArbosStateError {
     /// A brotli compression level above the maximum was supplied.
     #[error("invalid brotli compression level")]
     InvalidBrotliCompressionLevel,
+
+    /// Genesis initialisation was attempted on a state that already carries
+    /// an ArbOS version.
+    #[error("ArbOS state is already initialised")]
+    AlreadyInitialised,
+
+    /// Genesis initialisation cannot target ArbOS version 0.
+    #[error("cannot initialise to ArbOS version 0")]
+    InvalidInitialVersion,
 }

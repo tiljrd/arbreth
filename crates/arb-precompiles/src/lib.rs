@@ -207,7 +207,7 @@ pub fn init_precompile_gas_pure(
 }
 
 fn check_precompile_version(ctx: &ArbPrecompileCtx, min_version: u64) -> Option<PrecompileResult> {
-    if ctx.block.arbos_version < min_version {
+    if ctx.block.arbos_version() < min_version {
         Some(Ok(PrecompileOutput::new(0, Default::default())))
     } else {
         None
@@ -333,9 +333,14 @@ fn gas_check(
         return Err(PrecompileError::OutOfGas);
     }
     match result {
-        Err(PrecompileError::Other(_)) if ctx.block.arbos_version >= 11 => Ok(
-            PrecompileOutput::new_reverted(gas_used.min(gas_limit), Default::default()),
-        ),
+        Err(PrecompileError::Other(_))
+            if ctx.block.arbos_version() >= arb_chainspec::arbos_version::ARBOS_VERSION_11 =>
+        {
+            Ok(PrecompileOutput::new_reverted(
+                gas_used.min(gas_limit),
+                Default::default(),
+            ))
+        }
         other => other,
     }
 }
@@ -349,7 +354,7 @@ fn check_method_version(
     min_version: u64,
     max_version: u64,
 ) -> Option<PrecompileResult> {
-    let v = ctx.block.arbos_version;
+    let v = ctx.block.arbos_version();
     if v < min_version || (max_version > 0 && v > max_version) {
         Some(burn_all_revert(gas_limit))
     } else {
@@ -363,11 +368,16 @@ const KZG_POINT_EVALUATION_ADDRESS: alloy_primitives::Address =
 /// Registers Arbitrum precompiles into `map` and applies the per-ArbOS-version
 /// adjustments to the standard Ethereum precompile set.
 ///
+/// Precompiles introduced by a later ArbOS version are absent from the map
+/// below it, so they are neither dispatchable nor EIP-2929 warm-preloaded:
+/// calls to those addresses take plain account semantics (cold access) until
+/// activation.
+///
 /// `ctx` is captured into every handler closure so that handlers read the
 /// per-block / per-tx context as a typed function parameter rather than via
 /// a thread-local.
 pub fn register_arb_precompiles(map: &mut PrecompilesMap, ctx: Arc<ArbPrecompileCtx>) {
-    let arbos_version = ctx.block.arbos_version;
+    let arbos_version = ctx.block.arbos_version();
     map.extend_precompiles([
         (ARBSYS_ADDRESS, create_arbsys_precompile(ctx.clone())),
         (
@@ -404,20 +414,35 @@ pub fn register_arb_precompiles(map: &mut PrecompilesMap, ctx: Arc<ArbPrecompile
         (ARBOWNER_ADDRESS, create_arbowner_precompile(ctx.clone())),
         (ARBBLS_ADDRESS, create_arbbls_precompile()),
         (ARBDEBUG_ADDRESS, create_arbdebug_precompile(ctx.clone())),
-        (ARBWASM_ADDRESS, create_arbwasm_precompile(ctx.clone())),
-        (
+    ]);
+
+    // Version-banded precompiles activate per the shared table, the same
+    // source the upgrade-time `[0xFE]` code install reads.
+    let banded_active = |addr: alloy_primitives::Address| {
+        arb_chainspec::arbos_version::precompile_min_arbos_version(addr)
+            .is_some_and(|min| arbos_version >= min)
+    };
+    if banded_active(ARBWASM_ADDRESS) {
+        map.extend_precompiles([(ARBWASM_ADDRESS, create_arbwasm_precompile(ctx.clone()))]);
+    }
+    if banded_active(ARBWASMCACHE_ADDRESS) {
+        map.extend_precompiles([(
             ARBWASMCACHE_ADDRESS,
             create_arbwasmcache_precompile(ctx.clone()),
-        ),
-        (
-            ARBFILTEREDTXMANAGER_ADDRESS,
-            create_arbfilteredtxmanager_precompile(ctx.clone()),
-        ),
-        (
+        )]);
+    }
+    if banded_active(ARBNATIVETOKENMANAGER_ADDRESS) {
+        map.extend_precompiles([(
             ARBNATIVETOKENMANAGER_ADDRESS,
             create_arbnativetokenmanager_precompile(ctx.clone()),
-        ),
-    ]);
+        )]);
+    }
+    if banded_active(ARBFILTEREDTXMANAGER_ADDRESS) {
+        map.extend_precompiles([(
+            ARBFILTEREDTXMANAGER_ADDRESS,
+            create_arbfilteredtxmanager_precompile(ctx.clone()),
+        )]);
+    }
 
     if arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_50 {
         // P256VERIFY adopts the EIP-7951 Osaka schedule (6900 gas) at v50+.

@@ -61,11 +61,22 @@ pub struct ChainCaches {
 
 /// Per-block parameters populated once at block start.
 pub struct BlockCtx {
-    pub arbos_version: u64,
+    /// ArbOS version the block is currently executing under. Starts at the
+    /// staged (parent-derived) version and is raised by the executor when
+    /// `StartBlock` performs a scheduled upgrade, so later transactions in
+    /// the same block observe the post-upgrade version.
+    arbos_version: AtomicU64,
     pub block_timestamp: u64,
-    /// L1 block number observed by the EVM `NUMBER` opcode and precompiles
-    /// that surface the recorded L1 height.
+    /// L1 block number observed by the EVM `NUMBER` opcode (the header's
+    /// monotonic L1 height) and the *initial* read for precompiles. After
+    /// `StartBlock` runs, the storage-resident L1 height may rise by +1 below
+    /// ArbOS version 8; precompiles that surface the *recorded* L1 height
+    /// (`ArbSys.sendTxToL1`, …) read the updated value via
+    /// [`l1_block_number_recorded`].
     pub l1_block_number_for_evm: u64,
+    /// Storage-resident L1 height after `StartBlock` finishes. Defaults to
+    /// [`l1_block_number_for_evm`] when not yet updated.
+    pub l1_block_number_recorded: AtomicU64,
     pub l2_block_number: u64,
     pub allow_debug_precompiles: bool,
     /// Live counter mutated by the executor between transactions in the same block.
@@ -89,7 +100,7 @@ impl Default for BlockCtx {
 impl std::fmt::Debug for BlockCtx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BlockCtx")
-            .field("arbos_version", &self.arbos_version)
+            .field("arbos_version", &self.arbos_version())
             .field("block_timestamp", &self.block_timestamp)
             .field("l1_block_number_for_evm", &self.l1_block_number_for_evm)
             .field("l2_block_number", &self.l2_block_number)
@@ -129,9 +140,10 @@ impl BlockCtx {
         chain_caches: Arc<ChainCaches>,
     ) -> Self {
         Self {
-            arbos_version,
+            arbos_version: AtomicU64::new(arbos_version),
             block_timestamp,
             l1_block_number_for_evm,
+            l1_block_number_recorded: AtomicU64::new(l1_block_number_for_evm),
             l2_block_number,
             allow_debug_precompiles,
             current_gas_backlog: AtomicU64::new(0),
@@ -140,6 +152,33 @@ impl BlockCtx {
             recent_wasms: Mutex::new(RecentWasms::default()),
             arbos_state: OnceLock::new(),
         }
+    }
+
+    /// ArbOS version currently in effect for this block.
+    pub fn arbos_version(&self) -> u64 {
+        self.arbos_version
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Raise the in-effect ArbOS version. Called by the executor after
+    /// `StartBlock` performs a scheduled upgrade.
+    pub fn set_arbos_version(&self, value: u64) {
+        self.arbos_version
+            .store(value, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Recorded L1 block number — post-StartBlock storage value, used by
+    /// precompiles that surface the recorded L1 height.
+    pub fn l1_block_number_recorded(&self) -> u64 {
+        self.l1_block_number_recorded
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Update the recorded L1 block number. Called by the executor after
+    /// `StartBlock` advances the storage value.
+    pub fn set_l1_block_number_recorded(&self, value: u64) {
+        self.l1_block_number_recorded
+            .store(value, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Borrow the cached [`ArbosState`], constructing it on first call via

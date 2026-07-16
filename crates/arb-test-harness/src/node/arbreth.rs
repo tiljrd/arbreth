@@ -160,10 +160,7 @@ impl ExecutionNode for ArbrethProcess {
         let params = json!([
             idx,
             {
-                "message": {
-                    "header": &msg.header,
-                    "l2Msg": &msg.l2_msg,
-                },
+                "message": msg,
                 "delayedMessagesRead": delayed_messages_read,
             },
             Value::Null,

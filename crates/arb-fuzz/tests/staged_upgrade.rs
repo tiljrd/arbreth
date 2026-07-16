@@ -12,7 +12,14 @@
 //!     cargo test -p arb-fuzz --test staged_upgrade --release \
 //!     -- --ignored --nocapture
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
+
+/// Each upgrade-ladder case spawns its own Nitro + arbreth pair; serialize so
+/// concurrent `cargo test` threads don't contend on Docker / ports.
+static SERIAL: Mutex<()> = Mutex::new(());
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use arbitrary::{Arbitrary, Unstructured};
@@ -277,6 +284,7 @@ fn submit_retryable_step(
 #[test]
 #[ignore]
 fn block0_parity_zero_chain_owner_v40() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let mut rig = StagedRig::spawn(40, Address::ZERO);
     let scenario = Scenario {
         name: "block0_parity_zero_owner".into(),
@@ -314,6 +322,7 @@ fn block0_parity_zero_chain_owner_v40() {
 #[test]
 #[ignore]
 fn block0_parity_with_custom_chain_owner_v40() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let owner = derive_address(owner_signing_key());
     let mut rig = StagedRig::spawn(40, owner);
     let scenario = Scenario {
@@ -500,6 +509,7 @@ fn dump_arbos_state_diff(rig: &StagedRig) {
 #[test]
 #[ignore]
 fn staged_upgrade_v40_to_v50_to_v60() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let owner_sk = owner_signing_key();
     let owner = derive_address(owner_sk);
     let mut rig = StagedRig::spawn(40, owner);
@@ -840,6 +850,7 @@ fn build_staged_upgrade_scenario(owner_sk: B256, owner: Address) -> Scenario {
 #[test]
 #[ignore]
 fn fuzz_staged_upgrade_post_v60_traffic() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let iterations: usize = std::env::var("ARB_FUZZ_ITERATIONS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -1133,4 +1144,168 @@ fn write_seed0_fixture() {
     let body = serde_json::to_string_pretty(&scenario).expect("serialize scenario");
     std::fs::write(&target, body).expect("write fixture");
     eprintln!("wrote fixture to {}", target.display());
+}
+
+/// Build a deterministic ArbOS upgrade ladder starting at v6 (arb1's
+/// classic-migration genesis version) and stepping through v7, v8, v9, v10,
+/// v11. Each rung schedules the next version via `ArbOwner.scheduleArbOSUpgrade`,
+/// advances past the flag day, fires the upgrade with a block-forcing deposit,
+/// then drives a value transfer so the new version's fee/tip/pricing rules are
+/// exercised before the next rung. The band crosses the gates that change
+/// between v6 and v11: pre-v8 `l1BlockNumber++`, v9 always-collect tips, the
+/// v10 `L1FeesAvailable` bookkeeping switch and pre-v10 batch-poster path, and
+/// the v11 `FixRedeemGas` / `PerBatchGasCost` / chain-owner-list rectification.
+fn build_arb1_upgrade_ladder(owner_sk: B256, owner: Address, signer_sk: B256) -> Scenario {
+    let msg_idx = MsgIdx::new();
+    let mut steps: Vec<ScenarioStep> = Vec::new();
+    let mut t = 1_700_000_000u64;
+    let l1_block = 1u64;
+
+    // Fund the chain owner (pays for scheduleArbOSUpgrade) and a traffic signer.
+    steps.push(deposit_step(
+        &msg_idx,
+        owner,
+        U256::from(10u128).pow(U256::from(18u64)),
+        t,
+        l1_block,
+    ));
+    let signer = derive_address(signer_sk);
+    steps.push(deposit_step(
+        &msg_idx,
+        signer,
+        U256::from(10u128).pow(U256::from(18u64)),
+        t,
+        l1_block,
+    ));
+    let sink = Address::repeat_byte(0xe6);
+
+    // v6 -> {7,8,9,10,11}: one rung per target.
+    for (rung, target_version) in [7u64, 8, 9, 10, 11].into_iter().enumerate() {
+        let flag_day = t + 6;
+        steps.push(signed_owner_call_step(
+            &msg_idx,
+            owner_sk,
+            rung as u64,
+            schedule_upgrade_calldata(target_version, flag_day),
+            t,
+            l1_block,
+        ));
+        steps.push(ScenarioStep::AdvanceTime { seconds: 10 });
+        t += 10;
+        // Block-forcing deposit at t > flag_day fires the upgrade at block start.
+        steps.push(deposit_step(
+            &msg_idx,
+            owner,
+            U256::from(1_000_000_000_000_000u128),
+            t,
+            l1_block,
+        ));
+        // Exercise the freshly-activated version with a value transfer.
+        steps.push(signed_transfer_step(
+            &msg_idx,
+            signer_sk,
+            rung as u64,
+            sink,
+            U256::from(1_000u64 + target_version),
+            L2TxKind::Eip1559,
+            t,
+            l1_block,
+            Vec::new(),
+        ));
+    }
+
+    Scenario {
+        name: "arb1_upgrade_ladder_v6_to_v11".into(),
+        description: "arb1-era ArbOS upgrade ladder v6->v7->v8->v9->v10->v11".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: UPGRADE_L2_CHAIN_ID,
+            arbos_version: 6,
+            genesis: None,
+        },
+        steps,
+    }
+}
+
+/// Reads the stored ArbOS version (root subspace offset 0) from a node at the
+/// latest block.
+fn arbos_version_at_latest(rig: &StagedRig, left: bool) -> u64 {
+    let node: &dyn ExecutionNode = if left {
+        &rig.dual.left
+    } else {
+        &rig.dual.right
+    };
+    let latest = node.block(BlockId::Latest).expect("latest block").number;
+    let slot = slot_for_offset(&[], 0);
+    let raw = node
+        .storage(ARBOS_STATE_ADDRESS, slot, BlockId::Number(latest))
+        .unwrap_or(B256::ZERO);
+    U256::from_be_bytes(raw.0).try_into().unwrap_or(0)
+}
+
+#[test]
+#[ignore]
+fn staged_upgrade_v6_through_v11() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner_sk = owner_signing_key();
+    let owner = derive_address(owner_sk);
+    let signer_sk = B256::repeat_byte(0x5a);
+    let mut rig = StagedRig::spawn(6, owner);
+    let scenario = build_arb1_upgrade_ladder(owner_sk, owner, signer_sk);
+
+    let report = rig.dual.run(&scenario).expect("dual run");
+    if !report.is_clean() {
+        eprintln!(
+            "[arb1-ladder] DIVERGENCE blocks={} txs={} state={} logs={}",
+            report.block_diffs.len(),
+            report.tx_diffs.len(),
+            report.state_diffs.len(),
+            report.log_diffs.len(),
+        );
+        for d in &report.block_diffs {
+            eprintln!(
+                "  block#{} field={} left={} right={}",
+                d.number, d.field, d.left, d.right
+            );
+        }
+        let latest = rig
+            .dual
+            .left
+            .block(BlockId::Latest)
+            .expect("left latest")
+            .number;
+        diff_arbos_state_at(&rig, latest);
+    }
+    assert!(
+        report.is_clean(),
+        "arb1 v6->v11 upgrade ladder must produce no diffs"
+    );
+
+    // The ladder must actually have advanced both nodes to v11 — otherwise a
+    // clean run only proves both refused to upgrade.
+    let nitro_v = arbos_version_at_latest(&rig, true);
+    let arbreth_v = arbos_version_at_latest(&rig, false);
+    assert_eq!(nitro_v, 11, "Nitro did not reach v11 (got {nitro_v})");
+    assert_eq!(arbreth_v, 11, "arbreth did not reach v11 (got {arbreth_v})");
+
+    let latest = rig.dual.left.block(BlockId::Latest).expect("left latest");
+    assert_arbos_slots_match(&rig, latest.number);
+
+    // Every rung's schedule call and per-version transfer must have executed;
+    // a dropped tx no-ops identically on both nodes and hides coverage.
+    let at = BlockId::Number(latest.number);
+    let owner_nonce = rig
+        .dual
+        .right
+        .nonce(owner, at.clone())
+        .expect("owner nonce");
+    assert_eq!(
+        owner_nonce, 5,
+        "not every scheduleArbOSUpgrade call executed"
+    );
+    let signer_nonce = rig
+        .dual
+        .right
+        .nonce(derive_address(signer_sk), at)
+        .expect("signer nonce");
+    assert_eq!(signer_nonce, 5, "not every per-version transfer executed");
 }

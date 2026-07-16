@@ -113,7 +113,7 @@ fn current_gas_backlog_reads_and_writes() {
 #[test]
 fn block_ctx_new_populates_fields() {
     let block = BlockCtx::new(60, 1_700_000_000, 19_000_000, 250_000, true);
-    assert_eq!(block.arbos_version, 60);
+    assert_eq!(block.arbos_version(), 60);
     assert_eq!(block.block_timestamp, 1_700_000_000);
     assert_eq!(block.l1_block_number_for_evm, 19_000_000);
     assert_eq!(block.l2_block_number, 250_000);

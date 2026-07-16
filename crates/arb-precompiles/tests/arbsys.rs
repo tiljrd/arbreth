@@ -5,6 +5,8 @@ use arb_precompiles::create_arbsys_precompile;
 use common::{calldata, decode_address, decode_u256, word_address, word_u256, PrecompileTest};
 use revm::precompile::PrecompileError;
 
+const ARBOS_V5: u64 = 5;
+const ARBOS_V6: u64 = 6;
 const ARBOS_V11: u64 = 11;
 const ARBOS_V30: u64 = 30;
 
@@ -127,6 +129,92 @@ fn was_aliased_returns_true_when_top_level_aliased() {
         .arbos_state()
         .call(arbsys, &calldata("wasMyCallersAddressAliased()", &[]));
     assert_eq!(decode_u256(run.output()), U256::from(1));
+}
+
+// isTopLevel: arbos<6 uses `depth==2`; arbos>=6 checks
+// `origin == caller_at_depth(depth-1)`.
+
+#[test]
+fn was_aliased_v5_returns_false_at_depth_three() {
+    let origin: Address = address!("00000000000000000000000000000000000000aa");
+    let intermediate: Address = address!("00000000000000000000000000000000000000bb");
+    let run = PrecompileTest::new()
+        .arbos_version(ARBOS_V5)
+        .evm_depth(3)
+        .tx_is_aliased(true)
+        .caller(origin)
+        .caller_stack(vec![origin, origin, intermediate])
+        .arbos_state()
+        .call(arbsys, &calldata("wasMyCallersAddressAliased()", &[]));
+    assert_eq!(decode_u256(run.output()), U256::ZERO);
+}
+
+#[test]
+fn was_aliased_v6_returns_true_at_depth_three_when_caller_chain_is_origin() {
+    let origin: Address = address!("00000000000000000000000000000000000000aa");
+    let inner: Address = address!("00000000000000000000000000000000000000bb");
+    let run = PrecompileTest::new()
+        .arbos_version(ARBOS_V6)
+        .evm_depth(3)
+        .tx_is_aliased(true)
+        .caller(origin)
+        .caller_stack(vec![origin, origin, inner])
+        .arbos_state()
+        .call(arbsys, &calldata("wasMyCallersAddressAliased()", &[]));
+    assert_eq!(decode_u256(run.output()), U256::from(1));
+}
+
+#[test]
+fn was_aliased_v6_returns_false_at_depth_three_when_caller_chain_breaks() {
+    let origin: Address = address!("00000000000000000000000000000000000000aa");
+    let mid: Address = address!("00000000000000000000000000000000000000bb");
+    let inner: Address = address!("00000000000000000000000000000000000000cc");
+    let run = PrecompileTest::new()
+        .arbos_version(ARBOS_V6)
+        .evm_depth(3)
+        .tx_is_aliased(true)
+        .caller(origin)
+        .caller_stack(vec![origin, mid, inner])
+        .arbos_state()
+        .call(arbsys, &calldata("wasMyCallersAddressAliased()", &[]));
+    assert_eq!(decode_u256(run.output()), U256::ZERO);
+}
+
+#[test]
+fn caller_without_alias_v6_unaliases_caller_when_top_level() {
+    use arbos::util::inverse_remap_l1_address;
+    let origin: Address = address!("00000000000000000000000000000000000000aa");
+    let innermost: Address = address!("00000000000000000000000000000000000000cc");
+    let run = PrecompileTest::new()
+        .arbos_version(ARBOS_V6)
+        .evm_depth(3)
+        .tx_is_aliased(true)
+        .caller(origin)
+        // caller_at_depth(depth-1=2) is stack index 1; it must equal origin
+        // for topLevel, and is also the address that gets unaliased.
+        .caller_stack(vec![origin, origin, innermost])
+        .arbos_state()
+        .call(arbsys, &calldata("myCallersAddressWithoutAliasing()", &[]));
+    assert_eq!(
+        decode_address(run.output()),
+        inverse_remap_l1_address(origin)
+    );
+}
+
+#[test]
+fn caller_without_alias_v6_returns_caller_unchanged_when_not_top_level() {
+    let origin: Address = address!("00000000000000000000000000000000000000aa");
+    let mid: Address = address!("00000000000000000000000000000000000000bb");
+    let inner: Address = address!("00000000000000000000000000000000000000cc");
+    let run = PrecompileTest::new()
+        .arbos_version(ARBOS_V6)
+        .evm_depth(3)
+        .tx_is_aliased(true)
+        .caller(origin)
+        .caller_stack(vec![origin, mid, inner])
+        .arbos_state()
+        .call(arbsys, &calldata("myCallersAddressWithoutAliasing()", &[]));
+    assert_eq!(decode_address(run.output()), mid);
 }
 
 #[test]

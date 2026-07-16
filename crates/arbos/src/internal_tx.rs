@@ -364,11 +364,25 @@ where
         }
         INTERNAL_TX_BATCH_POSTING_REPORT_METHOD_ID => {
             let inputs = decode_batch_posting_report(data)?;
-            apply_batch_posting_report(backend, inputs, state, ctx, &mut transfer_fn)
+            apply_batch_posting_report(
+                backend,
+                inputs,
+                state,
+                ctx,
+                &mut transfer_fn,
+                &mut balance_of,
+            )
         }
         INTERNAL_TX_BATCH_POSTING_REPORT_V2_METHOD_ID => {
             let inputs = decode_batch_posting_report_v2(data)?;
-            apply_batch_posting_report_v2(backend, inputs, state, ctx, &mut transfer_fn)
+            apply_batch_posting_report_v2(
+                backend,
+                inputs,
+                state,
+                ctx,
+                &mut transfer_fn,
+                &mut balance_of,
+            )
         }
         _ => Err(InternalTxDecodeError::UnknownSelector { selector }),
     }
@@ -392,11 +406,11 @@ where
     let mut l1_block_number = inputs.l1_block_number;
     let mut time_passed = inputs.time_passed;
 
-    if arbos_version < arbos_version::ARBOS_VERSION_3 {
+    if arbos_version < arbos_version::ARBOS_VERSION_TIME_PASSED_AS_TIME {
         time_passed = inputs.l2_block_number;
     }
 
-    if arbos_version < arbos_version::ARBOS_VERSION_8 {
+    if arbos_version < arbos_version::ARBOS_VERSION_L1_BLOCK_NUMBER_DIRECT {
         l1_block_number = l1_block_number.saturating_add(1);
     }
 
@@ -433,15 +447,17 @@ where
     Ok(())
 }
 
-fn apply_batch_posting_report<D: revm::Database, B: Burner, F, C>(
+fn apply_batch_posting_report<D: revm::Database, B: Burner, F, G, C>(
     backend: &mut C,
     inputs: BatchPostingReportData,
     state: &mut ArbosState<'_, D, B>,
     ctx: &InternalTxContext,
     transfer_fn: &mut F,
+    balance_fn: &mut G,
 ) -> Result<(), InternalTxDecodeError>
 where
     F: FnMut(Address, Address, U256) -> Result<(), BalanceError>,
+    G: FnMut(Address) -> U256,
     C: StorageBackend,
 {
     let per_batch_gas = state
@@ -462,6 +478,7 @@ where
         wei_spent,
         inputs.l1_base_fee,
         &mut *transfer_fn,
+        &mut *balance_fn,
     ) {
         tracing::warn!(error = ?e, "L1 pricing update failed for batch posting report");
     }
@@ -469,15 +486,17 @@ where
     Ok(())
 }
 
-fn apply_batch_posting_report_v2<D: revm::Database, B: Burner, F, C>(
+fn apply_batch_posting_report_v2<D: revm::Database, B: Burner, F, G, C>(
     backend: &mut C,
     inputs: BatchPostingReportV2Data,
     state: &mut ArbosState<'_, D, B>,
     ctx: &InternalTxContext,
     transfer_fn: &mut F,
+    balance_fn: &mut G,
 ) -> Result<(), InternalTxDecodeError>
 where
     F: FnMut(Address, Address, U256) -> Result<(), BalanceError>,
+    G: FnMut(Address) -> U256,
     C: StorageBackend,
 {
     let arbos_version = state.arbos_version();
@@ -526,6 +545,7 @@ where
         wei_spent,
         inputs.l1_base_fee,
         &mut *transfer_fn,
+        &mut *balance_fn,
     ) {
         tracing::warn!(error = ?e, "L1 pricing update failed for batch posting report v2");
     }

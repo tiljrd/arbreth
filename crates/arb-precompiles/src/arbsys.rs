@@ -1,6 +1,7 @@
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{keccak256, Address, Log, B256, U256};
 use alloy_sol_types::{SolError, SolEvent, SolInterface};
+use arb_chainspec::arbos_version as arb_ver;
 use arb_context::ArbPrecompileCtx;
 use arb_storage::ARBOS_STATE_ADDRESS;
 use arbos::merkle_accumulator::calc_num_partials;
@@ -178,8 +179,8 @@ fn handle_arb_block_hash(
     let gas_limit = input.gas;
 
     if requested >= current || requested + 256 < current {
-        let arbos_version = ctx.block.arbos_version;
-        if arbos_version >= 11 {
+        let arbos_version = ctx.block.arbos_version();
+        if arbos_version >= arb_ver::ARBOS_VERSION_11 {
             let revert_data = IArbSys::InvalidBlockNumber {
                 requested: requested_u256,
                 current: U256::from(current),
@@ -292,7 +293,7 @@ fn handle_was_aliased(
 
     let tx_origin = input.internals().tx_origin();
     let depth = ctx.evm_depth();
-    let is_top_level = if arbos_version < 6 {
+    let is_top_level = if arbos_version < arb_ver::ARBOS_VERSION_IS_TOP_LEVEL_ORIGIN_CHECK {
         depth == 2
     } else if depth <= 2 {
         true
@@ -324,8 +325,8 @@ fn handle_caller_without_alias(
         Address::ZERO
     };
 
-    let arbos_version = ctx.block.arbos_version;
-    let is_top_level = if arbos_version < 6 {
+    let arbos_version = ctx.block.arbos_version();
+    let is_top_level = if arbos_version < arb_ver::ARBOS_VERSION_IS_TOP_LEVEL_ORIGIN_CHECK {
         depth == 2
     } else if depth <= 2 {
         true
@@ -420,9 +421,9 @@ fn do_send_tx_to_l1(
     let caller = input.caller;
     let value = input.value;
     let gas_limit = input.gas;
-    // Read the L1 block number recorded by StartBlock. `block_env.number` holds
-    // the header's mix_hash L1 value, which can lag the StartBlock-updated one.
-    let l1_block_number = U256::from(ctx.block.l1_block_number_for_evm);
+    // The storage-resident L1 height recorded by StartBlock (pre-v8 it is
+    // +1) — distinct from the header's mix_hash L1 value, which can lag it.
+    let l1_block_number = U256::from(ctx.block.l1_block_number_recorded());
     let l2_block_number = U256::from(ctx.block.l2_block_number);
     let timestamp = input.internals().block_timestamp();
 
@@ -549,7 +550,7 @@ fn do_send_tx_to_l1(
         LOG_GAS + LOG_TOPIC_GAS * 4 + LOG_DATA_GAS * l2l1_data_len,
     );
 
-    let return_val = if arbos_version >= 4 {
+    let return_val = if arbos_version >= arb_ver::ARBOS_VERSION_L2_TO_L1_RETURN_L2BLOCK {
         U256::from(leaf_num)
     } else {
         U256::from_be_bytes(send_hash.0)

@@ -4,12 +4,15 @@
 
 use std::{path::Path, str::FromStr, sync::Arc};
 
+use alloy_consensus::Header;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{hex, Address, B256, U256};
+use alloy_rlp::Decodable;
 use eyre::eyre;
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum_cli::chainspec::EthereumChainSpecParser;
+use reth_primitives_traits::SealedHeader;
 use revm::database::{EmptyDB, State, StateBuilder};
 use revm_database::states::bundle_state::BundleRetention;
 use serde_json::Value;
@@ -71,12 +74,47 @@ impl ChainSpecParser for ArbChainSpecParser {
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        if initial_arbos > 0 && chain_id > 0 {
-            // SkipGenesisInjection used to gate this call, but captured cache
-            // files miss accounts (FilteredTransactionsState) and never carry
-            // ArbOS-state-account storage. The injection helper merges per-
-            // account (user-supplied fields and explicit slots win), so it is
-            // safe to run unconditionally.
+        // Migrated chains (e.g. Arbitrum One at block 22207817) declare a
+        // non-zero genesis `number` and receive their full state from an
+        // external import (`init-state`), so ArbOS-alloc injection and header
+        // synthesis are skipped for them.
+        let genesis_number =
+            json_u64(value.pointer("/number")).map_err(|e| eyre!("genesis \"number\": {e}"))?;
+
+        // A migrated chain's genesis header (canonical parent hash, state
+        // root, gas fields) cannot be reproduced from the empty alloc, so
+        // take it verbatim from `genesisHeaderRlp`; strip the custom keys
+        // (reth's parser does not recognize them) and install it below.
+        let imported_header = if genesis_number > 0 {
+            let rlp_hex = value
+                .pointer("/genesisHeaderRlp")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    eyre!("genesis with number {genesis_number} requires a top-level \"genesisHeaderRlp\"")
+                })?;
+            let bytes = hex::decode(rlp_hex.trim_start_matches("0x"))
+                .map_err(|e| eyre!("decode genesisHeaderRlp hex: {e}"))?;
+            let header = Header::decode(&mut bytes.as_slice())
+                .map_err(|e| eyre!("decode genesis header RLP: {e}"))?;
+            if header.number != genesis_number {
+                return Err(eyre!(
+                    "genesisHeaderRlp number {} does not match genesis \"number\" {genesis_number}",
+                    header.number
+                ));
+            }
+            if let Some(obj) = value.as_object_mut() {
+                obj.remove("genesisHeaderRlp");
+                obj.remove("stateRoot");
+            }
+            Some(header)
+        } else {
+            None
+        };
+
+        if initial_arbos > 0 && chain_id > 0 && genesis_number == 0 {
+            // Captured cache files set SkipGenesisInjection but omit accounts;
+            // the injection helper merges (user-supplied fields win), so it
+            // runs regardless for zero-genesis chains.
             let _ = skip_injection;
             inject_arbos_alloc(
                 &mut value,
@@ -84,12 +122,41 @@ impl ChainSpecParser for ArbChainSpecParser {
                 initial_arbos,
                 initial_owner,
                 arbos_init,
+                // Gate above ensures genesis_number == 0; alloc injection
+                // only runs for fresh chains, so the genesis block num is 0.
+                0,
             )?;
             override_arbos_genesis_header(&mut value, initial_arbos)?;
         }
 
         let augmented = serde_json::to_string(&value)?;
-        EthereumChainSpecParser::parse(&augmented)
+        let spec = EthereumChainSpecParser::parse(&augmented)?;
+
+        if let Some(header) = imported_header {
+            let mut spec = Arc::try_unwrap(spec).unwrap_or_else(|a| (*a).clone());
+            spec.genesis_header = SealedHeader::seal_slow(header);
+            return Ok(Arc::new(spec));
+        }
+        Ok(spec)
+    }
+}
+
+/// Parse a JSON value that may be a number or a `0x`-hex / decimal string into
+/// a `u64`. Absent and `null` values mean 0; malformed values are an error.
+fn json_u64(v: Option<&Value>) -> eyre::Result<u64> {
+    match v {
+        None | Some(Value::Null) => Ok(0),
+        Some(Value::Number(n)) => n.as_u64().ok_or_else(|| eyre!("{n} is not a valid u64")),
+        Some(Value::String(s)) => {
+            let s = s.trim();
+            match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                Some(h) => {
+                    u64::from_str_radix(h, 16).map_err(|e| eyre!("invalid hex \"{s}\": {e}"))
+                }
+                None => s.parse().map_err(|e| eyre!("invalid number \"{s}\": {e}")),
+            }
+        }
+        Some(other) => Err(eyre!("expected number or string, got {other}")),
     }
 }
 
@@ -172,6 +239,7 @@ fn inject_arbos_alloc(
     arbos_version: u64,
     chain_owner: Address,
     arbos_init: genesis::ArbOSInit,
+    genesis_block_num: u64,
 ) -> eyre::Result<()> {
     // Pre-compute the Go-canonical chain config bytes so the resulting
     // `chain_config` subspace slot layout matches a Go-style
@@ -193,6 +261,7 @@ fn inject_arbos_alloc(
         chain_id,
         arbos_version,
         chain_owner,
+        genesis_block_num,
         arbos_init,
         serialized_chain_config,
         U256::from(DEFAULT_INITIAL_L1_BASE_FEE_WEI),
@@ -213,24 +282,22 @@ fn inject_arbos_alloc(
                 alloc_obj.insert(prefixed, injected);
             }
             Some(k) => {
-                // Merge injected entry into the user-supplied one. User-set
-                // fields (balance, nonce, code, individual storage slots)
-                // win on conflict so fixture overrides replace bootstrap
-                // values; injected fields fill in anything the user didn't
-                // specify.
-                let user = alloc_obj.get_mut(&k).unwrap();
-                if !user.is_object() || !injected.is_object() {
+                // User-set fields (balance, nonce, code, individual storage
+                // slots) win on conflict so fixture overrides replace
+                // bootstrap values; injected fields fill in the rest.
+                let Some(injected_obj) = injected.as_object() else {
                     continue;
-                }
-                let user_obj = user.as_object_mut().unwrap();
-                let injected_obj = injected.as_object().unwrap();
+                };
+                let Some(user_obj) = alloc_obj.get_mut(&k).and_then(|u| u.as_object_mut()) else {
+                    continue;
+                };
                 for (field, val) in injected_obj {
                     if field == "storage" {
                         continue;
                     }
                     user_obj.entry(field.clone()).or_insert(val.clone());
                 }
-                let injected_storage = injected
+                let injected_storage = injected_obj
                     .get("storage")
                     .and_then(|s| s.as_object())
                     .cloned()
@@ -276,6 +343,7 @@ pub fn compute_arbos_alloc(
         chain_id,
         arbos_version,
         chain_owner,
+        0,
         arbos_init,
         Vec::new(),
         U256::ZERO,
@@ -292,6 +360,7 @@ pub fn compute_arbos_alloc_with_config(
     chain_id: u64,
     arbos_version: u64,
     chain_owner: Address,
+    genesis_block_num: u64,
     arbos_init: genesis::ArbOSInit,
     serialized_chain_config: Vec<u8>,
     initial_l1_base_fee: U256,
@@ -313,6 +382,7 @@ pub fn compute_arbos_alloc_with_config(
         chain_id,
         arbos_version,
         chain_owner,
+        genesis_block_num,
         arbos_init,
     )
     .map_err(|e| eyre!("initialize_arbos_state: {e}"))?;
@@ -704,6 +774,75 @@ fn pad_address_lower(s: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn json_u64_parses_number_hex_and_decimal() {
+        assert_eq!(json_u64(Some(&json!(22_207_817u64))).unwrap(), 22_207_817);
+        assert_eq!(json_u64(Some(&json!("0x152dd49"))).unwrap(), 22_207_817);
+        assert_eq!(json_u64(Some(&json!("22207817"))).unwrap(), 22_207_817);
+        assert_eq!(json_u64(None).unwrap(), 0);
+        assert_eq!(json_u64(Some(&json!(null))).unwrap(), 0);
+        assert!(json_u64(Some(&json!("0x152dd4x"))).is_err());
+        assert!(json_u64(Some(&json!("not-a-number"))).is_err());
+        assert!(json_u64(Some(&json!(-5))).is_err());
+        assert!(json_u64(Some(&json!({}))).is_err());
+    }
+
+    #[test]
+    fn nonzero_genesis_installs_rlp_header_and_skips_injection() {
+        use alloy_rlp::Encodable;
+        // Non-default fields prove the header is installed verbatim.
+        let header = Header {
+            number: 22_207_817,
+            state_root: B256::repeat_byte(0x11),
+            gas_used: 924_040,
+            ..Default::default()
+        };
+        let mut rlp = Vec::new();
+        header.encode(&mut rlp);
+        let expected_hash = header.hash_slow();
+
+        let spec_json = serde_json::to_string(&json!({
+            "config": {
+                "chainId": 42161,
+                "homesteadBlock": 0, "eip150Block": 0, "eip155Block": 0, "eip158Block": 0,
+                "byzantiumBlock": 0, "constantinopleBlock": 0, "petersburgBlock": 0,
+                "istanbulBlock": 0, "berlinBlock": 0, "londonBlock": 0,
+                "arbitrum": {
+                    "EnableArbOS": true,
+                    "InitialArbOSVersion": 6,
+                    "InitialChainOwner": "0xd345e41ae2cb00311956aa7109fc801ae8c81a52",
+                    "GenesisBlockNum": 22207817,
+                    "SkipGenesisInjection": true
+                }
+            },
+            "number": "0x152dd49",
+            "genesisHeaderRlp": format!("0x{}", hex::encode(&rlp)),
+            "nonce": "0x1",
+            "timestamp": "0x630f8216",
+            "extraData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "gasLimit": "0x4000000000000",
+            "difficulty": "0x1",
+            "mixHash": "0x0000000000000000000000000000000000000000000000060000000000000000",
+            "coinbase": "0x0000000000000000000000000000000000000000",
+            "baseFeePerGas": "0x5f5e100",
+            "alloc": {}
+        }))
+        .unwrap();
+
+        let mismatched = spec_json.replace("\"0x152dd49\"", "\"0x152dd48\"");
+        let err = ArbChainSpecParser::parse(&mismatched).unwrap_err();
+        assert!(err.to_string().contains("does not match"));
+
+        let spec = ArbChainSpecParser::parse(&spec_json).expect("parse arb1-like spec");
+        assert_eq!(spec.genesis_header().number, 22_207_817);
+        assert_eq!(spec.genesis_header().state_root, B256::repeat_byte(0x11));
+        assert_eq!(spec.genesis_header().gas_used, 924_040);
+        // The installed header must hash exactly to the canonical block.
+        assert_eq!(spec.genesis_hash(), expected_hash);
+        // Migrated chains receive their state from `init-state`, not injection.
+        assert!(spec.genesis.alloc.is_empty());
+    }
 
     #[test]
     fn serialize_chain_config_matches_v10_default_layout() {

@@ -607,6 +607,7 @@ where
                     chain_id,
                     initial_version,
                     genesis::DEFAULT_CHAIN_OWNER,
+                    self.chain_spec.genesis_header().number,
                     genesis::ArbOSInit::default(),
                 )
                 .map_err(|e| BlockProducerError::Execution(e.to_string()))?;
@@ -1286,10 +1287,12 @@ where
     ) -> Result<ProducedBlock, BlockProducerError> {
         let _lock = self.produce_lock.lock().await;
 
-        // Validate that this message is the next expected one.
+        // Validate that this message is the next expected one. Message
+        // indices are 0-based from genesis, so the block number is
+        // `genesis + msg_idx` (genesis is non-zero for migrated chains).
         let head_num = self.head_block_number()?;
         let expected_block = head_num + 1;
-        let actual_block = msg_idx;
+        let actual_block = self.chain_spec.genesis_header().number + msg_idx;
 
         if expected_block != actual_block {
             return Err(BlockProducerError::Unexpected(format!(

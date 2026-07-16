@@ -162,7 +162,7 @@ fn handle_events_view(
 ) -> PrecompileResult {
     // v < 11: view-method log writes are permitted; emit and succeed.
     // v >= 11: framework rejects with ErrWriteProtection.
-    if ctx.block.arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_11 {
+    if ctx.block.arbos_version() >= arb_chainspec::arbos_version::ARBOS_VERSION_11 {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
 
