@@ -13,7 +13,7 @@ jobs:
     name: unit tests (nextest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - name: Init submodules with retry
@@ -41,7 +41,7 @@ jobs:
     name: doctests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - name: Init submodules with retry
