@@ -47,6 +47,7 @@ fn execute_in_fresh_block(
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: vec![0u8; 32].into(),
     };
 

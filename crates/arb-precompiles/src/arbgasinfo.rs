@@ -6,7 +6,7 @@ use arb_storage::ARBOS_STATE_ADDRESS;
 
 use revm::{
     context_interface::block::Block,
-    precompile::{PrecompileId, PrecompileOutput, PrecompileResult},
+    precompile::{PrecompileId, PrecompileResult},
 };
 use std::sync::Arc;
 
@@ -29,7 +29,7 @@ use arbos::l1_pricing::L1_PRICER_FUNDS_POOL_ADDRESS;
 
 pub fn create_arbgasinfo_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbgasinfo"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -69,7 +69,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Calls::getCurrentTxL1GasFees(_) => {
             let fee = U256::from(ctx.tx_snapshot().poster_fee);
             crate::charge_computation(&mut gas_used, ctx, COPY_GAS);
-            Ok(PrecompileOutput::new(
+            Ok(crate::output(
                 gas_used.min(gas_limit),
                 fee.to_be_bytes::<32>().to_vec().into(),
             ))
@@ -187,12 +187,12 @@ fn field_read_output(
     ctx: &ArbPrecompileCtx,
     gas_limit: u64,
     value: U256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     // init already charged the OpenArbosState read and L2Calldata; body
     // adds one storage read for the field and the result-copy as computation.
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         value.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -204,7 +204,7 @@ fn read_l1_price_per_unit(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -223,7 +223,7 @@ fn read_l1_inertia(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -242,7 +242,7 @@ fn read_l1_per_unit_reward(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -261,7 +261,7 @@ fn read_l1_pay_rewards_to(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -285,7 +285,7 @@ fn read_l1_last_surplus(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -309,7 +309,7 @@ fn read_l1_per_batch_gas_cost(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -328,7 +328,7 @@ fn read_l1_amortized_cost_cap_bips(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -347,7 +347,7 @@ fn read_l1_equilibration_units(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -366,7 +366,7 @@ fn read_l1_last_update_time(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -385,7 +385,7 @@ fn read_l1_funds_due_for_rewards(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -404,7 +404,7 @@ fn read_l1_units_since_update(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -423,7 +423,7 @@ fn read_l1_fees_available(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -444,7 +444,7 @@ fn read_l2_min_base_fee(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -463,7 +463,7 @@ fn read_l2_gas_backlog(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -482,7 +482,7 @@ fn read_l2_pricing_inertia(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -501,7 +501,7 @@ fn read_l2_backlog_tolerance(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -520,7 +520,7 @@ fn read_l2_per_block_gas_limit(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -539,7 +539,7 @@ fn read_l2_per_tx_gas_limit(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -563,7 +563,7 @@ fn handle_l1_pricing_surplus(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     let arbos_version = ctx.block.arbos_version;
     load_arbos(input)?;
@@ -607,7 +607,7 @@ fn handle_l1_pricing_surplus(
     let body_sloads = if arbos_version >= 10 { 3 } else { 2 };
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         surplus.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -617,7 +617,7 @@ fn handle_prices_in_wei(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data_len = input.data.len();
     let gas_limit = input.gas;
     let arbos_version = ctx.block.arbos_version;
@@ -682,17 +682,14 @@ fn handle_prices_in_wei(
     let body_sloads = if read_min_base { 2 } else { 1 };
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, 6 * COPY_GAS);
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_gas_accounting_params(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
 
@@ -719,17 +716,14 @@ fn handle_gas_accounting_params(
 
     crate::charge_storage_read(gas_used, ctx, 2 * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, 3 * COPY_GAS);
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_prices_in_arbgas(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let data_len = input.data.len();
     let gas_limit = input.gas;
 
@@ -784,10 +778,7 @@ fn handle_prices_in_arbgas(
     let _ = data_len;
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, 3 * COPY_GAS);
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 // ── Constraint getters (ArbOS v50+) ─────────────────────────────────
@@ -801,7 +792,7 @@ fn handle_gas_pricing_constraints(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
 
@@ -845,10 +836,7 @@ fn handle_gas_pricing_constraints(
     let body_sloads = sloads.saturating_sub(1);
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, result_words * COPY_GAS);
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 /// Returns `[]MultiGasConstraint` ABI-encoded.
@@ -860,7 +848,7 @@ fn handle_multi_gas_pricing_constraints(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     use arb_primitives::multigas::ResourceKind;
     let gas_limit = input.gas;
     load_arbos(input)?;
@@ -949,10 +937,7 @@ fn handle_multi_gas_pricing_constraints(
     let body_sloads = sloads.saturating_sub(1);
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, result_words * COPY_GAS);
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 /// Returns `uint256[]` — current-block base fee per resource kind. Reads BaseFeeWei,
@@ -962,7 +947,7 @@ fn handle_multi_gas_base_fee(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     use arb_primitives::multigas::{ResourceKind, NUM_RESOURCE_KIND};
     let gas_limit = input.gas;
     load_arbos(input)?;
@@ -1000,8 +985,5 @@ fn handle_multi_gas_base_fee(
     let body_sloads = 1 + NUM_RESOURCE_KIND as u64;
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, result_words * COPY_GAS);
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
