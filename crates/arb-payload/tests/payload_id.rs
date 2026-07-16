@@ -12,6 +12,7 @@ fn base_attrs() -> ArbPayloadAttributes {
             suggested_fee_recipient: address!("1111111111111111111111111111111111111111"),
             withdrawals: None,
             parent_beacon_block_root: None,
+            target_gas_limit: None,
             slot_number: None,
         },
         transactions: None,

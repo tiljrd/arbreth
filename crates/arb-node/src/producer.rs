@@ -1017,12 +1017,13 @@ where
         let hashed_state =
             HashedPostState::from_bundle_state::<reth_trie_common::KeccakKeyHasher>(bundle.state());
 
-        let (state_root, trie_updates) = {
+        let (state_root, trie_updates, changed_paths) = {
             let acc_arc = self.accumulated_trie_input.lock().clone();
             let flushing_arc = self.flushing_trie_input.lock().clone();
 
             let block_state_sorted = hashed_state.clone().into_sorted();
-            let prefix_sets = block_state_sorted.construct_prefix_sets().freeze();
+            let prefix_sets = block_state_sorted.construct_prefix_sets();
+            let changed_paths = prefix_sets.clone();
 
             let mut new_acc_state = (*acc_arc.state).clone();
             new_acc_state.extend_ref_and_sort(&block_state_sorted);
@@ -1045,7 +1046,7 @@ where
             ));
 
             let (root, updates) =
-                crate::launcher::compute_parallel_state_root(overlay, prefix_sets)
+                crate::launcher::compute_overlay_state_root(overlay, prefix_sets)
                     .map_err(|e| BlockProducerError::Execution(format!("state root: {e}")))?;
 
             let mut new_acc_nodes = (*acc_arc.nodes).clone();
@@ -1056,7 +1057,7 @@ where
                 Default::default(),
             ));
 
-            (root, updates)
+            (root, updates, changed_paths)
         };
 
         // Derive header info (send_root, send_count, etc.) from post-execution state.
@@ -1149,7 +1150,7 @@ where
         // Buffer block in memory for batched persistence.
         {
             use alloy_evm::block::BlockExecutionResult;
-            use reth_chain_state::ComputedTrieData;
+            use reth_trie::ComputedTrieData;
             use reth_execution_types::BlockExecutionOutput;
             use reth_primitives_traits::RecoveredBlock;
 
@@ -1163,10 +1164,11 @@ where
                     blob_gas_used: 0,
                 },
             });
-            let computed = ComputedTrieData {
-                hashed_state: Arc::new(hashed_state.into_sorted()),
-                trie_updates: Arc::new(trie_updates.into_sorted()),
-            };
+            let computed = ComputedTrieData::new_with_changed_paths(
+                Arc::new(hashed_state.into_sorted()),
+                Arc::new(trie_updates.into_sorted()),
+                Some(Arc::new(changed_paths)),
+            );
             let executed = ExecutedBlock::new(recovered, exec_output, computed);
 
             self.in_memory_state

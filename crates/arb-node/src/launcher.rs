@@ -63,7 +63,7 @@ use arb_primitives::ArbPrimitives;
 static TREE_SENDER: OnceLock<TreeSender<ArbEngineTypes, ArbPrimitives>> = OnceLock::new();
 static ENGINE_HANDLE: OnceLock<ConsensusEngineHandle<ArbEngineTypes>> = OnceLock::new();
 static FLUSH_HANDLE: OnceLock<FlushHandle> = OnceLock::new();
-static PARALLEL_STATE_ROOT_FN: OnceLock<ParallelStateRootFn> = OnceLock::new();
+static STATE_ROOT_FN: OnceLock<StateRootFn> = OnceLock::new();
 
 /// Request sent to the background persistence thread.
 pub enum PersistenceRequest {
@@ -94,11 +94,17 @@ struct FlushHandle {
     flush_done: Arc<tokio::sync::Notify>,
 }
 
-/// Type-erased parallel state root function.
-type ParallelStateRootFn = Box<
+/// Type-erased overlay state root function.
+///
+/// Computes the state root over the persisted trie plus the given in-memory
+/// overlay (trie nodes and hashed state of all unpersisted blocks), limited to
+/// the paths in `prefix_sets`. The nodes overlay is required for correctness:
+/// prefix sets only cover the current block, so branch nodes recomputed by
+/// earlier unpersisted blocks must be visible to the walk.
+type StateRootFn = Box<
     dyn Fn(
             Arc<reth_trie_common::TrieInputSorted>,
-            reth_trie_common::prefix_set::TriePrefixSets,
+            reth_trie_common::prefix_set::TriePrefixSetsMut,
         )
             -> Result<(alloy_primitives::B256, reth_trie::updates::TrieUpdates), LauncherError>
         + Send
@@ -151,13 +157,13 @@ pub fn flush_notifier() -> Option<Arc<tokio::sync::Notify>> {
     FLUSH_HANDLE.get().map(|handle| handle.flush_done.clone())
 }
 
-pub fn compute_parallel_state_root(
+pub fn compute_overlay_state_root(
     overlay: Arc<reth_trie_common::TrieInputSorted>,
-    prefix_sets: reth_trie_common::prefix_set::TriePrefixSets,
+    prefix_sets: reth_trie_common::prefix_set::TriePrefixSetsMut,
 ) -> Result<(alloy_primitives::B256, reth_trie::updates::TrieUpdates), LauncherError> {
-    let f = PARALLEL_STATE_ROOT_FN
+    let f = STATE_ROOT_FN
         .get()
-        .ok_or(LauncherError::ParallelStateRootNotInitialized)?;
+        .ok_or(LauncherError::StateRootNotInitialized)?;
     f(overlay, prefix_sets)
 }
 
@@ -325,6 +331,9 @@ impl ArbEngineLauncher {
             engine_events: event_sender.clone(),
         };
         let validator_builder = add_ons.engine_validator_builder();
+        let state_trie_overlays = reth_chain_state::StateTrieOverlayManager::<ArbPrimitives>::new(
+            ctx.task_executor().state_trie_overlay_worker_pool(),
+        );
 
         let engine_validator = validator_builder
             .clone()
@@ -332,9 +341,11 @@ impl ArbEngineLauncher {
                 &add_ons_ctx,
                 engine_tree_config.clone(),
                 changeset_cache.clone(),
+                state_trie_overlays.clone(),
             )
             .await?;
 
+        let reorg_state_trie_overlays = state_trie_overlays.clone();
         let consensus_engine_stream = UnboundedReceiverStream::from(consensus_engine_rx)
             .maybe_skip_fcu(node_config.debug.skip_fcu)
             .maybe_skip_new_payload(node_config.debug.skip_new_payload)
@@ -344,7 +355,12 @@ impl ArbEngineLauncher {
                 || async {
                     let reorg_cache = ChangesetCache::new();
                     validator_builder
-                        .build_tree_validator(&add_ons_ctx, engine_tree_config.clone(), reorg_cache)
+                        .build_tree_validator(
+                            &add_ons_ctx,
+                            engine_tree_config.clone(),
+                            reorg_cache,
+                            reorg_state_trie_overlays.clone(),
+                        )
                         .await
                 },
                 node_config.debug.reorg_frequency,
@@ -445,52 +461,36 @@ impl ArbEngineLauncher {
         }
 
         {
-            use reth_provider::{
-                providers::{OverlayBuilder, OverlayStateProviderFactory},
-                BlockHashReader, DatabaseProviderFactory, StageCheckpointReader,
-            };
-            use reth_stages_api::StageId;
-            use reth_trie_parallel::root::ParallelStateRoot;
+            use reth_provider::DatabaseProviderFactory;
+            use reth_trie::StateRoot;
+            use reth_trie_db::DatabaseStateRoot;
+
+            type DbStateRoot<'a, TX, A> = StateRoot<
+                reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
+                reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+            >;
 
             let pf = ctx.provider_factory().clone();
-            let runtime = ctx.task_executor().clone();
-            let changeset_cache_for_root = changeset_cache.clone();
 
-            let state_root_fn: ParallelStateRootFn = Box::new(move |overlay, prefix_sets| {
-                // Anchor the overlay on the persisted tip. A flush may land
-                // between reading the tip and resolving the overlay, in which
-                // case the factory rejects the stale anchor; retry once with
-                // the advanced tip (the overlay covers flushed state as well).
-                let mut last_err = None;
-                for _ in 0..2 {
-                    let provider = pf.database_provider_ro().map_err(LauncherError::from)?;
-                    let tip_number = provider
-                        .get_stage_checkpoint(StageId::Finish)
-                        .map_err(LauncherError::from)?
-                        .map(|chk| chk.block_number)
-                        .unwrap_or_default();
-                    let tip_hash = provider
-                        .block_hash(tip_number)
-                        .map_err(LauncherError::from)?
-                        .unwrap_or_default();
-                    drop(provider);
-
-                    let builder = OverlayBuilder::<ArbPrimitives>::new(
-                        tip_hash,
-                        changeset_cache_for_root.clone(),
+            // The overlay covers every unpersisted block, so a flush landing
+            // concurrently only makes the database contain state the overlay
+            // duplicates; recomputation over the overlap is idempotent.
+            let state_root_fn: StateRootFn = Box::new(move |overlay, prefix_sets| {
+                let provider = pf.database_provider_ro().map_err(LauncherError::from)?;
+                let input = reth_trie_common::TrieInputSorted {
+                    nodes: Arc::clone(&overlay.nodes),
+                    state: Arc::clone(&overlay.state),
+                    prefix_sets,
+                };
+                let tx = provider.tx_ref();
+                reth_trie_db::with_adapter!(provider, |A| {
+                    <DbStateRoot<'_, _, A> as DatabaseStateRoot<_>>::overlay_root_from_nodes_with_updates(
+                        tx, input,
                     )
-                    .with_hashed_state_overlay(Some(Arc::clone(&overlay.state)));
-                    let factory = OverlayStateProviderFactory::new(pf.clone(), builder);
-                    match ParallelStateRoot::new(factory, prefix_sets.clone(), runtime.clone())
-                        .incremental_root_with_updates()
-                    {
-                        Ok(res) => return Ok(res),
-                        Err(err) => last_err = Some(err),
-                    }
-                }
-                Err(LauncherError::from(last_err.expect("retry loop ran")))
+                    .map_err(LauncherError::from)
+                })
             });
-            let _ = PARALLEL_STATE_ROOT_FN.set(state_root_fn);
+            let _ = STATE_ROOT_FN.set(state_root_fn);
         }
 
         let (mut orchestrator, arb_tree_sender) = build_arb_engine_orchestrator(
@@ -505,6 +505,7 @@ impl ArbEngineLauncher {
             pruner,
             ctx.components().payload_builder_handle().clone(),
             engine_validator,
+            state_trie_overlays,
             engine_tree_config,
             ctx.sync_metrics_tx(),
             ctx.components().evm_config().clone(),

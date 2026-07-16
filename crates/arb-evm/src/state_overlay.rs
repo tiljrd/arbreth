@@ -66,7 +66,7 @@ impl StateOverlay {
         }
         let entries: Vec<(Address, Entry)> = self.entries.drain().collect();
 
-        let mut existing_transitions: Vec<(Address, TransitionAccount)> = Vec::new();
+        let mut existing_transitions = Vec::new();
 
         for (addr, entry) in entries {
             let current_info = state

@@ -60,6 +60,7 @@ reth-storage-api = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-tokio-util = { workspace = true }
 reth-tracing = { workspace = true }
+reth-execution-errors = { workspace = true }
 reth-trie = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-network-p2p = { workspace = true }

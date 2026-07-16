@@ -498,7 +498,7 @@ fn stylus_call_trampoline<BlockEnv, TxEnv, CfgEnv, DB, Chain>(
     parent_pages: (u16, u16),
 ) -> SubCallResult
 where
-    BlockEnv: revm::context::Block,
+    BlockEnv: alloy_evm::env::BlockEnvironment,
     TxEnv: revm::context::Transaction,
     CfgEnv: revm::context::Cfg,
     DB: Database,
@@ -817,7 +817,7 @@ fn stylus_create_trampoline<BlockEnv, TxEnv, CfgEnv, DB, Chain>(
     parent_pages: (u16, u16),
 ) -> SubCreateResult
 where
-    BlockEnv: revm::context::Block,
+    BlockEnv: alloy_evm::env::BlockEnvironment,
     TxEnv: revm::context::Transaction,
     CfgEnv: revm::context::Cfg,
     DB: Database,
@@ -1045,7 +1045,7 @@ fn run_evm_bytecode<BlockEnv, TxEnv, CfgEnv, DB, Chain>(
     pre_ctx: &arb_context::ArbPrecompileCtx,
 ) -> InterpreterResult
 where
-    BlockEnv: revm::context::Block,
+    BlockEnv: alloy_evm::env::BlockEnvironment,
     TxEnv: revm::context::Transaction,
     CfgEnv: revm::context::Cfg,
     DB: Database,
@@ -1322,7 +1322,7 @@ fn execute_stylus_program<BlockEnv, TxEnv, CfgEnv, DB, Chain>(
     ctx: &std::sync::Arc<arb_context::ArbPrecompileCtx>,
 ) -> InterpreterResult
 where
-    BlockEnv: revm::context::Block,
+    BlockEnv: alloy_evm::env::BlockEnvironment,
     TxEnv: revm::context::Transaction,
     CfgEnv: revm::context::Cfg,
     DB: Database,
@@ -1660,7 +1660,7 @@ fn build_evm_data<BlockEnv, TxEnv, CfgEnv, DB, Chain>(
     ctx: &arb_context::ArbPrecompileCtx,
 ) -> EvmData
 where
-    BlockEnv: revm::context::Block,
+    BlockEnv: alloy_evm::env::BlockEnvironment,
     TxEnv: revm::context::Transaction,
     CfgEnv: revm::context::Cfg,
     DB: Database,
@@ -1758,7 +1758,7 @@ fn execute_stylus_call_concrete<DB: Database>(
 
 // ── Precompile provider ────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ArbPrecompilesMap {
     pub inner: PrecompilesMap,
     /// Per-block context shared with the registered precompile closures and
@@ -1776,7 +1776,7 @@ impl<BlockEnv, TxEnv, CfgEnv, DB, Chain>
     PrecompileProvider<revm::Context<BlockEnv, TxEnv, CfgEnv, DB, revm::Journal<DB>, Chain>>
     for ArbPrecompilesMap
 where
-    BlockEnv: revm::context::Block,
+    BlockEnv: alloy_evm::env::BlockEnvironment,
     TxEnv: revm::context::Transaction,
     CfgEnv: revm::context::Cfg,
     DB: Database,

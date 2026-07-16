@@ -4,10 +4,7 @@ use alloy_sol_types::SolInterface;
 use arb_context::ArbPrecompileCtx;
 use arb_storage::ARBOS_STATE_ADDRESS;
 
-use revm::{
-    context_interface::block::Block,
-    precompile::{PrecompileId, PrecompileResult},
-};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::{interfaces::IArbGasInfo, ArbPrecompileError};

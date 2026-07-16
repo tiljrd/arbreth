@@ -7,14 +7,14 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, StorageKey, B256, U256};
 use alloy_rpc_types_eth::{state::StateOverride, BlockId};
-use reth_primitives_traits::{Recovered, WithEncoded};
+use reth_primitives_traits::WithEncoded;
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_convert::{RpcConvert, RpcTxReq};
 use reth_rpc_eth_api::{
     helpers::{
         estimate::EstimateCall, pending_block::PendingEnvBuilder, Call, EthApiSpec, EthBlocks,
-        EthCall, EthFees, EthSigner, EthState, EthTransactions, LoadBlock, LoadFee,
-        LoadPendingBlock, LoadReceipt, LoadState, LoadTransaction, SpawnBlocking, Trace,
+        EthCall, EthFees, EthSigner, EthState, EthSubscriptions, EthTransactions, LoadBlock,
+        LoadFee, LoadPendingBlock, LoadReceipt, LoadState, LoadTransaction, SpawnBlocking, Trace,
     },
     EthApiTypes, FromEvmError, RpcNodeCore, RpcNodeCoreExt,
 };
@@ -28,7 +28,7 @@ use reth_tasks::{
     Runtime,
 };
 use reth_transaction_pool::{
-    AddedTransactionOutcome, PoolPooledTx, PoolTransaction, TransactionOrigin, TransactionPool,
+    AddedTransactionOutcome, PoolTx, TransactionOrigin,
 };
 use tracing::trace;
 
@@ -1022,13 +1022,12 @@ where
         self.inner.send_raw_transaction_sync_timeout()
     }
 
-    async fn send_transaction(
+    async fn send_pool_transaction(
         &self,
         origin: TransactionOrigin,
-        tx: WithEncoded<Recovered<PoolPooledTx<Self::Pool>>>,
+        tx: WithEncoded<PoolTx<Self::Pool>>,
     ) -> Result<B256, Self::Error> {
-        let (_tx_bytes, recovered) = tx.split();
-        let pool_transaction = <Self::Pool as TransactionPool>::Transaction::from_pooled(recovered);
+        let (_tx_bytes, pool_transaction) = tx.split();
 
         let AddedTransactionOutcome { hash, .. } = self
             .inner
@@ -1037,6 +1036,13 @@ where
 
         Ok(hash)
     }
+}
+
+impl<N, Rpc> EthSubscriptions for ArbEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+{
 }
 
 impl<N, Rpc> LoadReceipt for ArbEthApi<N, Rpc>

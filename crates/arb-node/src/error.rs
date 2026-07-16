@@ -6,7 +6,7 @@
 
 use arbos::arbos_state::ArbosStateError;
 use reth_storage_errors::provider::ProviderError;
-use reth_trie_parallel::root::ParallelStateRootError;
+use reth_execution_errors::StateRootError;
 
 /// Errors surfaced by the `arb-node` launcher infrastructure.
 #[derive(Debug, thiserror::Error)]
@@ -20,14 +20,14 @@ pub enum LauncherError {
     #[error(transparent)]
     Provider(#[from] ProviderError),
 
-    /// Parallel state-root computation failed.
+    /// Overlay state-root computation failed.
     #[error(transparent)]
-    ParallelStateRoot(#[from] ParallelStateRootError),
+    StateRoot(#[from] StateRootError),
 
-    /// The parallel state-root callback was queried before the launcher
-    /// finished wiring it up. This indicates a startup-ordering bug.
-    #[error("parallel state root callback not initialized")]
-    ParallelStateRootNotInitialized,
+    /// The state-root callback was queried before the launcher finished
+    /// wiring it up. This indicates a startup-ordering bug.
+    #[error("state root callback not initialized")]
+    StateRootNotInitialized,
 
     /// ArbOS genesis initialization failed.
     #[error(transparent)]
