@@ -193,8 +193,13 @@ impl StateProofProvider for CoalescedStateProvider {
         self.inner.multiproof(input, targets)
     }
 
-    fn witness(&self, input: TrieInput, target: HashedPostState) -> ProviderResult<Vec<Bytes>> {
-        self.inner.witness(input, target)
+    fn witness(
+        &self,
+        input: TrieInput,
+        target: HashedPostState,
+        mode: reth_trie_common::ExecutionWitnessMode,
+    ) -> ProviderResult<Vec<Bytes>> {
+        self.inner.witness(input, target, mode)
     }
 }
 

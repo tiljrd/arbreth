@@ -108,6 +108,8 @@ fn reexecute_v60_start_block_persists_writes_to_bundle() {
     // carries delayed_messages_read.
     let header = Header {
         parent_hash: PARENT_HASH,
+        block_access_list_hash: None,
+        slot_number: None,
         ommers_hash: alloy_consensus::constants::EMPTY_OMMER_ROOT_HASH,
         beneficiary: address!("a4b000000000000000000073657175656e636572"),
         state_root: B256::ZERO,

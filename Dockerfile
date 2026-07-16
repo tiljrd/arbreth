@@ -21,6 +21,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY .cargo/ .cargo/
 COPY crates/ crates/
 COPY bin/ bin/
+COPY vendor/ vendor/
 COPY .gitmodules ./
 COPY brotli/ brotli/
 

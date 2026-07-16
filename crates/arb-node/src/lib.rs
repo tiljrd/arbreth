@@ -141,6 +141,7 @@ where
             BasicEngineApiBuilder::default(),
             BasicEngineValidatorBuilder::default(),
             Default::default(),
+            Default::default(),
         )
         .extend_rpc_modules(register_arb_rpc)
     }

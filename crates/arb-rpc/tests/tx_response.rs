@@ -22,6 +22,7 @@ fn info() -> TransactionInfo {
         index: Some(0),
         block_hash: Some(B256::repeat_byte(0xBB)),
         block_number: Some(42),
+        block_timestamp: None,
         base_fee: Some(1_000_000_000),
     }
 }

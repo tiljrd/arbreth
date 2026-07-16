@@ -316,6 +316,7 @@ impl PrecompileTest {
                 internals,
                 target_address: self.target_address,
                 bytecode_address: self.bytecode_address,
+                reservoir: 0,
             })
         };
 
@@ -346,6 +347,27 @@ impl PrecompileRun {
             Err(e) => e,
             Ok(out) => panic!("expected Err, got Ok with {} bytes", out.bytes.len()),
         }
+    }
+    pub fn assert_halt(&self) {
+        let out = self.assert_ok();
+        assert!(
+            matches!(out.status, revm::precompile::PrecompileStatus::Halt(_)),
+            "expected halt, got {:?}",
+            out.status
+        );
+    }
+    pub fn assert_oog(&self) {
+        let out = self.assert_ok();
+        assert!(
+            matches!(
+                out.status,
+                revm::precompile::PrecompileStatus::Halt(
+                    revm::precompile::PrecompileHalt::OutOfGas
+                )
+            ),
+            "expected out-of-gas halt, got {:?}",
+            out.status
+        );
     }
     pub fn output(&self) -> &Bytes {
         &self.assert_ok().bytes
