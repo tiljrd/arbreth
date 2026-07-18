@@ -11,7 +11,7 @@ const INCREASED_CALLDATA: usize = 0;
 /// Feature flags backed by a storage BigUint used as a bitmask.
 pub struct Features<'a, D> {
     features: StorageBackedBigUint,
-    _phantom: PhantomData<&'a mut revm::database::State<D>>,
+    _phantom: PhantomData<fn(&'a mut revm::database::State<D>)>,
 }
 
 pub fn open_features<'a, D>(base_key: alloy_primitives::B256, offset: u64) -> Features<'a, D> {

@@ -7,14 +7,14 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, StorageKey, B256, U256};
 use alloy_rpc_types_eth::{state::StateOverride, BlockId};
-use reth_primitives_traits::{Recovered, WithEncoded};
+use reth_primitives_traits::WithEncoded;
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_convert::{RpcConvert, RpcTxReq};
 use reth_rpc_eth_api::{
     helpers::{
         estimate::EstimateCall, pending_block::PendingEnvBuilder, Call, EthApiSpec, EthBlocks,
-        EthCall, EthFees, EthSigner, EthState, EthTransactions, LoadBlock, LoadFee,
-        LoadPendingBlock, LoadReceipt, LoadState, LoadTransaction, SpawnBlocking, Trace,
+        EthCall, EthFees, EthSigner, EthState, EthSubscriptions, EthTransactions, LoadBlock,
+        LoadFee, LoadPendingBlock, LoadReceipt, LoadState, LoadTransaction, SpawnBlocking, Trace,
     },
     EthApiTypes, FromEvmError, RpcNodeCore, RpcNodeCoreExt,
 };
@@ -27,9 +27,7 @@ use reth_tasks::{
     pool::{BlockingTaskGuard, BlockingTaskPool},
     Runtime,
 };
-use reth_transaction_pool::{
-    AddedTransactionOutcome, PoolPooledTx, PoolTransaction, TransactionOrigin, TransactionPool,
-};
+use reth_transaction_pool::{AddedTransactionOutcome, PoolTx, TransactionOrigin};
 use tracing::trace;
 
 use arb_storage::{
@@ -312,7 +310,7 @@ where
             let res = self
                 .transact_call_at(req, at, EvmOverrides::state(state_override.clone()))
                 .await?;
-            Ok((res.result.gas_used(), res.result.is_success()))
+            Ok((res.result.tx_gas_used(), res.result.is_success()))
         };
 
         let compute_cap = rpc_gas_cap.saturating_sub(gas_for_l1).max(1);
@@ -436,8 +434,13 @@ where
         // estimation machinery. The equivalent call has the exact
         // same state transitions as what the auto-redeem runs, so
         // its gas result is the auto-redeem's gas 1:1.
-        let redeem_gas =
-            EstimateCall::estimate_gas_at(self, equivalent_req, at, state_override).await?;
+        let redeem_gas = EstimateCall::estimate_gas_at(
+            self,
+            equivalent_req,
+            at,
+            alloy_rpc_types_eth::state::EvmOverrides::state(state_override),
+        )
+        .await?;
 
         // Submit-retryable intrinsic gas matches the default
         // IntrinsicGas for ArbitrumSubmitRetryableTx: 21,000 tx base +
@@ -952,6 +955,14 @@ where
 {
 }
 
+impl<N, Rpc> reth_rpc_eth_api::helpers::GetBlockAccessList for ArbEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    EthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError, Evm = N::Evm>,
+{
+}
+
 impl<N, Rpc> LoadPendingBlock for ArbEthApi<N, Rpc>
 where
     N: RpcNodeCore,
@@ -1009,13 +1020,12 @@ where
         self.inner.send_raw_transaction_sync_timeout()
     }
 
-    async fn send_transaction(
+    async fn send_pool_transaction(
         &self,
         origin: TransactionOrigin,
-        tx: WithEncoded<Recovered<PoolPooledTx<Self::Pool>>>,
+        tx: WithEncoded<PoolTx<Self::Pool>>,
     ) -> Result<B256, Self::Error> {
-        let (_tx_bytes, recovered) = tx.split();
-        let pool_transaction = <Self::Pool as TransactionPool>::Transaction::from_pooled(recovered);
+        let (_tx_bytes, pool_transaction) = tx.split();
 
         let AddedTransactionOutcome { hash, .. } = self
             .inner
@@ -1024,6 +1034,13 @@ where
 
         Ok(hash)
     }
+}
+
+impl<N, Rpc> EthSubscriptions for ArbEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+{
 }
 
 impl<N, Rpc> LoadReceipt for ArbEthApi<N, Rpc>
@@ -1043,14 +1060,16 @@ where
     /// `l1BlockNumber` on every receipt).
     fn build_transaction_receipt(
         &self,
-        tx: reth_storage_api::ProviderTx<Self::Provider>,
+        tx: reth_primitives_traits::Recovered<reth_storage_api::ProviderTx<Self::Provider>>,
         meta: alloy_consensus::transaction::TransactionMeta,
         receipt: reth_storage_api::ProviderReceipt<Self::Provider>,
+        all_receipts: Option<
+            std::sync::Arc<Vec<reth_storage_api::ProviderReceipt<Self::Provider>>>,
+        >,
     ) -> impl std::future::Future<
         Output = Result<reth_rpc_eth_api::RpcReceipt<Self::NetworkTypes>, Self::Error>,
     > + Send {
         use alloy_consensus::TxReceipt;
-        use reth_primitives_traits::SignerRecoverable;
         use reth_rpc_convert::transaction::ConvertReceiptInput;
         use reth_rpc_eth_api::RpcNodeCoreExt;
         use reth_rpc_eth_types::{
@@ -1058,16 +1077,19 @@ where
         };
         async move {
             let hash = meta.block_hash;
-            let all_receipts = self
-                .cache()
-                .get_receipts(hash)
-                .await
-                .map_err(<Self::Error as FromEthApiError>::from_eth_err)?
-                .ok_or_else(|| {
-                    <Self::Error as FromEthApiError>::from_eth_err(EthApiError::HeaderNotFound(
-                        hash.into(),
-                    ))
-                })?;
+            let all_receipts = match all_receipts {
+                Some(receipts) => receipts,
+                None => self
+                    .cache()
+                    .get_receipts(hash)
+                    .await
+                    .map_err(<Self::Error as FromEthApiError>::from_eth_err)?
+                    .ok_or_else(|| {
+                        <Self::Error as FromEthApiError>::from_eth_err(EthApiError::HeaderNotFound(
+                            hash.into(),
+                        ))
+                    })?,
+            };
 
             let (gas_used, next_log_index) =
                 calculate_gas_used_and_next_log_index(meta.index, &all_receipts);
@@ -1078,12 +1100,8 @@ where
                 .await
                 .map_err(<Self::Error as FromEthApiError>::from_eth_err)?;
 
-            let tx_recovered = tx
-                .try_into_recovered_unchecked()
-                .map_err(<Self::Error as FromEthApiError>::from_eth_err)?;
-
             let input = ConvertReceiptInput {
-                tx: tx_recovered.as_recovered_ref(),
+                tx: tx.as_recovered_ref(),
                 gas_used: receipt.cumulative_gas_used() - gas_used,
                 receipt,
                 next_log_index,
@@ -1110,6 +1128,10 @@ where
     EthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError, Evm = N::Evm>,
 {
+    fn compute_state_root_for_eth_simulate(&self) -> bool {
+        self.inner.compute_state_root_for_eth_simulate()
+    }
+
     #[inline]
     fn call_gas_limit(&self) -> u64 {
         self.inner.gas_cap()
@@ -1163,7 +1185,7 @@ where
         &self,
         request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
         at: BlockId,
-        state_override: Option<StateOverride>,
+        overrides: alloy_rpc_types_eth::state::EvmOverrides,
     ) -> impl std::future::Future<Output = Result<U256, Self::Error>> + Send {
         async move {
             use crate::nodeinterface_rpc::NODE_INTERFACE_ADDRESS;
@@ -1188,7 +1210,7 @@ where
                 if let Some(ref buf) = input_bytes {
                     if buf.len() >= 4 && buf[..4] == [0xc3, 0xdc, 0x58, 0x79] {
                         return self
-                            .estimate_retryable_ticket_gas(buf, at, state_override)
+                            .estimate_retryable_ticket_gas(buf, at, overrides.state.clone())
                             .await;
                     }
                 }
@@ -1198,8 +1220,7 @@ where
             let calldata_len = input_bytes.as_ref().map(|b| b.len()).unwrap_or(0);
 
             // Run the standard binary search to find compute gas.
-            let compute_gas =
-                EstimateCall::estimate_gas_at(self, request, at, state_override).await?;
+            let compute_gas = EstimateCall::estimate_gas_at(self, request, at, overrides).await?;
 
             // Add L1 posting gas.
             let l1_gas = self.l1_posting_gas(calldata_len, at)?;

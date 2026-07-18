@@ -14,7 +14,7 @@ fn revert_round_trips_through_revm_mapper() {
     };
 
     let output = err.into_precompile_result(10_000).expect("ok-revert");
-    assert!(output.reverted);
+    assert!(output.is_revert());
     assert_eq!(output.gas_used, 123);
     let bytes = output.bytes.as_ref();
     assert_eq!(&bytes[..4], &selector);
@@ -29,14 +29,19 @@ fn revert_caps_gas_used_at_gas_limit() {
         gas_used: 5_000,
     };
     let output = err.into_precompile_result(1_000).expect("ok-revert");
-    assert!(output.reverted);
+    assert!(output.is_revert());
     assert_eq!(output.gas_used, 1_000);
 }
 
 #[test]
-fn out_of_gas_maps_to_revm_out_of_gas() {
-    let revm_err: PrecompileError = ArbPrecompileError::OutOfGas.into();
-    assert!(matches!(revm_err, PrecompileError::OutOfGas));
+fn out_of_gas_maps_to_out_of_gas_halt() {
+    let output = ArbPrecompileError::OutOfGas
+        .into_precompile_result(10_000)
+        .expect("ok-halt");
+    assert!(matches!(
+        output.status,
+        revm::precompile::PrecompileStatus::Halt(revm::precompile::PrecompileHalt::OutOfGas)
+    ));
 }
 
 #[test]
@@ -49,7 +54,7 @@ fn fatal_propagates_source_via_display() {
     let display = format!("{err}");
     assert!(display.contains("disk on fire: hot"));
 
-    let revm_err: PrecompileError = err.into();
+    let revm_err = err.into_precompile_result(10_000).expect_err("fatal");
     match revm_err {
         PrecompileError::Fatal(msg) => assert!(msg.contains("disk on fire: hot")),
         other => panic!("expected Fatal, got {other:?}"),

@@ -4,7 +4,7 @@ use alloy_sol_types::SolInterface;
 use arb_context::ArbPrecompileCtx;
 use arb_storage::ARBOS_STATE_ADDRESS;
 use arbos::address_set::AddressSetError;
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::{interfaces::IArbOwnerPublic, ArbPrecompileError};
@@ -21,7 +21,7 @@ const COPY_GAS: u64 = 3;
 
 pub fn create_arbownerpublic_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbownerpublic"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -241,10 +241,10 @@ fn field_read_output(
     ctx: &ArbPrecompileCtx,
     gas_limit: u64,
     value: U256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         value.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -254,7 +254,7 @@ fn read_network_fee_account(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -277,7 +277,7 @@ fn read_infra_fee_account(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -306,7 +306,7 @@ fn read_brotli_compression_level(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -324,7 +324,7 @@ fn read_native_token_management_from(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -342,7 +342,7 @@ fn read_transaction_filtering_from(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -360,7 +360,7 @@ fn read_filtered_funds_recipient(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -383,7 +383,7 @@ fn read_parent_gas_floor_per_token(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -402,7 +402,7 @@ fn handle_scheduled_upgrade(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -424,10 +424,7 @@ fn handle_scheduled_upgrade(
 
     crate::charge_storage_read(gas_used, ctx, 2 * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, 2 * COPY_GAS);
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_is_chain_owner(
@@ -435,7 +432,7 @@ fn handle_is_chain_owner(
     gas_used: &mut u64,
     addr: Address,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -455,7 +452,7 @@ fn handle_is_chain_owner(
 
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         result.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -466,7 +463,7 @@ fn handle_is_native_token_owner(
     gas_used: &mut u64,
     addr: Address,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -486,7 +483,7 @@ fn handle_is_native_token_owner(
 
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         result.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -497,7 +494,7 @@ fn handle_is_transaction_filterer(
     gas_used: &mut u64,
     addr: Address,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -517,7 +514,7 @@ fn handle_is_transaction_filterer(
 
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         result.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -533,7 +530,7 @@ fn handle_get_all_chain_owners(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     handle_get_all_set_members(input, gas_used, AddressSetKind::ChainOwners, 256, ctx)
 }
 
@@ -541,7 +538,7 @@ fn handle_get_all_native_token_owners(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     handle_get_all_set_members(
         input,
         gas_used,
@@ -555,7 +552,7 @@ fn handle_get_all_transaction_filterers(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     handle_get_all_set_members(
         input,
         gas_used,
@@ -571,7 +568,7 @@ fn handle_get_all_set_members(
     kind: AddressSetKind,
     cap: u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -600,10 +597,7 @@ fn handle_get_all_set_members(
 
     crate::charge_storage_read(gas_used, ctx, (1 + count) * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, (2 + count) * COPY_GAS);
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(gas_limit),
-        out.into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), out.into()))
 }
 
 fn handle_rectify_chain_owner(
@@ -611,7 +605,7 @@ fn handle_rectify_chain_owner(
     gas_used: &mut u64,
     addr: Address,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
 
@@ -623,14 +617,14 @@ fn handle_rectify_chain_owner(
 
     match arb_state.chain_owners.rectify_mapping(internals, addr) {
         Ok(()) => {}
-        Err(AddressSetError::Storage(s)) => return Err(ArbPrecompileError::fatal(s).into()),
+        Err(AddressSetError::Storage(s)) => return Err(ArbPrecompileError::fatal(s)),
         Err(AddressSetError::NotMember) => {
             crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
-            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+            return Err(ArbPrecompileError::empty_revert(*gas_used));
         }
         Err(AddressSetError::MappingAlreadyConsistent) => {
             crate::charge_storage_read(gas_used, ctx, 4 * SLOAD_GAS);
-            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+            return Err(ArbPrecompileError::empty_revert(*gas_used));
         }
     }
 
@@ -650,17 +644,14 @@ fn handle_rectify_chain_owner(
     crate::charge_storage_write(gas_used, ctx, SSTORE_ZERO_GAS + 3 * SSTORE_GAS);
     crate::charge_history_growth(gas_used, ctx, RECTIFY_EVENT_GAS);
     // No return value: result cost covers zero words.
-    Ok(PrecompileOutput::new(
-        (*gas_used).min(gas_limit),
-        Vec::new().into(),
-    ))
+    Ok(crate::output((*gas_used).min(gas_limit), Vec::new().into()))
 }
 
 fn handle_is_calldata_price_increase_enabled(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -679,7 +670,7 @@ fn handle_is_calldata_price_increase_enabled(
     };
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         value.to_be_bytes::<32>().to_vec().into(),
     ))
@@ -689,7 +680,7 @@ fn handle_max_stylus_fragments(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -709,7 +700,7 @@ fn handle_max_stylus_fragments(
     out[31] = count;
     crate::charge_params_read(gas_used, ctx);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.to_vec().into(),
     ))
@@ -719,7 +710,7 @@ fn handle_get_collect_tips(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let gas_limit = input.gas;
     load_arbos(input)?;
     let internals = input.internals_mut();
@@ -737,7 +728,7 @@ fn handle_get_collect_tips(
     }
     crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, COPY_GAS);
-    Ok(PrecompileOutput::new(
+    Ok(crate::output(
         (*gas_used).min(gas_limit),
         out.to_vec().into(),
     ))

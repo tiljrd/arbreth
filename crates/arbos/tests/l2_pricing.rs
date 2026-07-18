@@ -130,6 +130,90 @@ fn multi_gas_constraints_add_open_clear() {
     assert_eq!(p.multi_gas_constraints_length(b).unwrap(), 0);
 }
 
+#[derive(Clone, Copy)]
+enum GasModelSetup {
+    Legacy,
+    Single,
+    Multi,
+}
+
+#[test]
+fn multi_gas_refund_applies_truth_table() {
+    fn refund_applies(version: u64, model: GasModelSetup) -> bool {
+        let mut h = ArbosHarness::new().with_arbos_version(version).initialize();
+        let sp = h.state_ptr();
+        let p = h.l2_pricing_state();
+        let b = unsafe { &mut *sp };
+        match model {
+            GasModelSetup::Legacy => {}
+            GasModelSetup::Single => {
+                p.add_gas_constraint(b, 100, 200, 300).unwrap();
+            }
+            GasModelSetup::Multi => {
+                let w = weights(&[(ResourceKind::Computation, 10)]);
+                p.add_multi_gas_constraint(b, 100, 200u32, 300, &w).unwrap();
+            }
+        }
+        p.multi_gas_refund_applies(b).unwrap()
+    }
+
+    use GasModelSetup::{Legacy, Multi, Single};
+
+    // Below MultiGasConstraints (v60) the refund never applies, regardless of
+    // model. Arbitrum One is at v40 today, so it is unaffected.
+    for v in [30, 40, 50] {
+        for m in [Legacy, Single, Multi] {
+            assert!(
+                !refund_applies(v, m),
+                "v{v}: refund must not apply below v60"
+            );
+        }
+    }
+
+    // At v60 the refund applies for every model, preserving pre-fix behavior.
+    // Arbitrum Sepolia is at v60 today.
+    for m in [Legacy, Single, Multi] {
+        assert!(refund_applies(60, m), "v60: refund applies for every model");
+    }
+
+    // From MultiGasRefundFix (v61) the refund applies only on MultiGasConstraints
+    // chains; single-constraint and legacy chains (e.g. Robinhood) skip it.
+    assert!(!refund_applies(61, Legacy), "v61 legacy: refund suppressed");
+    assert!(!refund_applies(61, Single), "v61 single: refund suppressed");
+    assert!(refund_applies(61, Multi), "v61 multi: refund applies");
+}
+
+#[test]
+fn multi_gas_base_fee_source_switches_at_v61() {
+    let block_base_fee = U256::from(999u64);
+
+    // v60: the single-dimensional resource is valued at the stored base fee; the
+    // block base fee argument is ignored.
+    let mut h = ArbosHarness::new()
+        .with_arbos_version(ARBOS_V60)
+        .initialize();
+    let sp = h.state_ptr();
+    let p = h.l2_pricing_state();
+    let b = unsafe { &mut *sp };
+    let stored = p.base_fee_wei(b).unwrap();
+    assert_ne!(stored, block_base_fee);
+    let fees = p
+        .get_multi_gas_base_fee_per_resource(b, block_base_fee)
+        .unwrap();
+    assert_eq!(fees[ResourceKind::SingleDim as usize], stored);
+
+    // v61 (MultiGasRefundFix): the single-dimensional resource uses the block
+    // base fee passed by the caller.
+    let mut h = ArbosHarness::new().with_arbos_version(61).initialize();
+    let sp = h.state_ptr();
+    let p = h.l2_pricing_state();
+    let b = unsafe { &mut *sp };
+    let fees = p
+        .get_multi_gas_base_fee_per_resource(b, block_base_fee)
+        .unwrap();
+    assert_eq!(fees[ResourceKind::SingleDim as usize], block_base_fee);
+}
+
 #[test]
 fn multi_gas_constraints_exponents() {
     let mut h = ArbosHarness::new()

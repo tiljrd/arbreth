@@ -207,6 +207,7 @@ fn sepolia_269589805_sender_net_charges_match_canonical() {
         parent_beacon_block_root: None,
         ommers: &[],
         withdrawals: None,
+        slot_number: None,
         extra_data: vec![0u8; 32].into(),
     };
     let mut executor = cfg

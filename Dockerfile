@@ -6,7 +6,7 @@
 ARG BINARY_STAGE=compile
 
 # Stage 1: Compile
-FROM rust:1.93-bookworm AS compile
+FROM rust:1.95-bookworm AS compile
 
 RUN apt-get update && apt-get install -y \
     clang \
@@ -21,6 +21,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY .cargo/ .cargo/
 COPY crates/ crates/
 COPY bin/ bin/
+COPY vendor/ vendor/
 COPY .gitmodules ./
 COPY brotli/ brotli/
 

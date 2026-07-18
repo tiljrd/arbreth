@@ -1,3 +1,4 @@
+#![allow(clippy::explicit_counter_loop)]
 //! Differential test for multi-gas pricing under ACTIVE constraints.
 //!
 //! Boots a fresh `NitroDocker` + `ArbrethProcess` pair (NOT shared, because the

@@ -2,7 +2,7 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolInterface;
 use arb_context::ArbPrecompileCtx;
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileId, PrecompileResult};
 use std::sync::Arc;
 
 use crate::interfaces::IArbosTest;
@@ -15,7 +15,7 @@ pub const ARBOSTEST_ADDRESS: Address = Address::new([
 
 pub fn create_arbostest_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbostest"), move |input| {
-        handler(input, &ctx)
+        crate::echo_reservoir(input, |input| handler(input, &ctx))
     })
 }
 
@@ -51,16 +51,13 @@ fn handle_burn_arb_gas(
     ctx: &ArbPrecompileCtx,
     gas_limit: u64,
     amount: U256,
-) -> PrecompileResult {
+) -> crate::ArbPrecompileResult {
     let Ok(to_burn) = u64::try_from(amount) else {
-        return Ok(PrecompileOutput::new_reverted(
-            *gas_used,
-            Default::default(),
-        ));
+        return Ok(crate::revert_output(*gas_used, Default::default()));
     };
     // Burning more than the remaining gas consumes all of it yet still
     // succeeds; smaller amounts are charged as computation as usual.
     let remaining = gas_limit.saturating_sub(*gas_used);
     crate::charge_computation(gas_used, ctx, to_burn.min(remaining));
-    Ok(PrecompileOutput::new(*gas_used, Default::default()))
+    Ok(crate::output(*gas_used, Default::default()))
 }
