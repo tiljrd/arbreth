@@ -65,6 +65,12 @@ impl ChainSpecParser for ArbChainSpecParser {
             .and_then(|s| Address::from_str(s.trim_start_matches("0x")).ok())
             .unwrap_or(Address::ZERO);
         let arbos_init = parse_arbos_init(&value);
+        let initial_l1_base_fee = value
+            .pointer("/arbOSInit/initialL1BaseFee")
+            .or_else(|| value.pointer("/config/arbitrum/InitialL1BaseFee"))
+            .and_then(Value::as_u64)
+            .map(U256::from)
+            .unwrap_or_else(|| U256::from(DEFAULT_INITIAL_L1_BASE_FEE_WEI));
 
         let skip_injection = value
             .pointer(SKIP_GENESIS_INJECTION_POINTER)
@@ -84,6 +90,7 @@ impl ChainSpecParser for ArbChainSpecParser {
                 initial_arbos,
                 initial_owner,
                 arbos_init,
+                initial_l1_base_fee,
             )?;
             override_arbos_genesis_header(&mut value, initial_arbos)?;
         }
@@ -172,13 +179,18 @@ fn inject_arbos_alloc(
     arbos_version: u64,
     chain_owner: Address,
     arbos_init: genesis::ArbOSInit,
+    initial_l1_base_fee: U256,
 ) -> eyre::Result<()> {
-    // Pre-compute the Go-canonical chain config bytes so the resulting
-    // `chain_config` subspace slot layout matches a Go-style
-    // `json.Unmarshal` + `json.Marshal` of the same chain spec.
+    // The `chain_config` subspace stores the serialized chain config bytes.
+    // Prefer the genesis's own `serializedChainConfig` when present: a chain's
+    // config serialization can differ by field presence and address casing, so
+    // re-deriving it does not match every chain. Fall back to re-serializing the
+    // `config` object otherwise.
     let serialized_chain_config = value
-        .get("config")
-        .map(serialize_chain_config_go_style)
+        .get("serializedChainConfig")
+        .and_then(Value::as_str)
+        .map(|s| s.as_bytes().to_vec())
+        .or_else(|| value.get("config").map(serialize_chain_config_go_style))
         .unwrap_or_default();
 
     let alloc_obj = value
@@ -195,7 +207,7 @@ fn inject_arbos_alloc(
         chain_owner,
         arbos_init,
         serialized_chain_config,
-        U256::from(DEFAULT_INITIAL_L1_BASE_FEE_WEI),
+        initial_l1_base_fee,
     )?;
     for (addr, account) in entries {
         let key = address_lower_no_prefix(addr);
