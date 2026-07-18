@@ -1143,6 +1143,7 @@ dependencies = [
  "revm-primitives",
  "revm-state",
  "rustc-hash",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]

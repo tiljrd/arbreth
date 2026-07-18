@@ -112,7 +112,12 @@ where
             self.executor_factory.allow_debug_precompiles(),
         );
 
-        let cfg_env = arb_cfg_env(chain_id, spec, arbos_version);
+        let cfg_env = arb_cfg_env(
+            chain_id,
+            spec,
+            arbos_version,
+            arb_code_size_limits(&*self.chain_spec),
+        );
         // Arbitrum sets PREVRANDAO to BigToHash(difficulty), which is 0x...0001.
         let prevrandao = B256::from(U256::from(1));
         let block_env = BlockEnv {
@@ -156,7 +161,12 @@ where
             self.executor_factory.allow_debug_precompiles(),
         );
 
-        let cfg_env = arb_cfg_env(chain_id, spec, arbos_version);
+        let cfg_env = arb_cfg_env(
+            chain_id,
+            spec,
+            arbos_version,
+            arb_code_size_limits(&*self.chain_spec),
+        );
         // Arbitrum sets PREVRANDAO to BigToHash(difficulty), which is 0x...0001.
         let prevrandao = B256::from(U256::from(1));
         let block_env = BlockEnv {
@@ -239,7 +249,12 @@ where
             self.executor_factory.allow_debug_precompiles(),
         );
 
-        let cfg_env = arb_cfg_env(self.chain_spec.chain().id(), spec, arbos_version);
+        let cfg_env = arb_cfg_env(
+            self.chain_spec.chain().id(),
+            spec,
+            arbos_version,
+            arb_code_size_limits(&*self.chain_spec),
+        );
 
         // Arbitrum sets PREVRANDAO to BigToHash(difficulty), which is 0x...0001.
         let prevrandao = B256::from(U256::from(1));
@@ -391,16 +406,48 @@ fn stage_rpc_block_ctx(
     factory.stage_ctx(ctx);
 }
 
+/// Contract code-size and init-code-size limits declared in the chain's
+/// Arbitrum config (`MaxCodeSize` / `MaxInitCodeSize`). `None` keeps revm's
+/// EIP-170 / EIP-3860 defaults; a set `MaxCodeSize` defaults the init-code limit
+/// to twice the code limit.
+fn arb_code_size_limits<C: EthChainSpec>(chain_spec: &C) -> (Option<usize>, Option<usize>) {
+    let arb = chain_spec
+        .genesis()
+        .config
+        .extra_fields
+        .get_deserialized::<serde_json::Value>("arbitrum")
+        .and_then(|v| v.ok());
+    let read = |key: &str| {
+        arb.as_ref()
+            .and_then(|a| a.get(key))
+            .and_then(serde_json::Value::as_u64)
+            .filter(|&n| n > 0)
+            .map(|n| n as usize)
+    };
+    let code = read("MaxCodeSize");
+    let initcode = read("MaxInitCodeSize").or_else(|| code.map(|c| c.saturating_mul(2)));
+    (code, initcode)
+}
+
 /// Build a `CfgEnv` with Arbitrum-specific overrides.
 ///
 /// Disables EIP-3541 (0xEF rejection) for Stylus-era blocks so that
 /// Stylus WASM programs can be deployed. Disables the priority fee
 /// ordering check (Arbitrum tips are always dropped). Disables EIP-7623
 /// increased calldata cost (irrelevant on L2 without blobs).
-fn arb_cfg_env(chain_id: u64, spec: SpecId, arbos_version: u64) -> CfgEnv {
+fn arb_cfg_env(
+    chain_id: u64,
+    spec: SpecId,
+    arbos_version: u64,
+    code_size_limits: (Option<usize>, Option<usize>),
+) -> CfgEnv {
     let mut cfg = CfgEnv::new()
         .with_chain_id(chain_id)
         .with_spec_and_mainnet_gas_params(spec);
+    // Apply the chain's configured contract-size limits; Arbitrum chains may
+    // raise them above the EIP-170 / EIP-3860 defaults (`None` keeps the default).
+    cfg.limit_contract_code_size = code_size_limits.0;
+    cfg.limit_contract_initcode_size = code_size_limits.1;
     // Arbitrum drops tips — max_priority_fee can exceed max_fee.
     cfg.disable_priority_fee_check = true;
     // EIP-7623 increases calldata cost for blob-less chains; irrelevant on L2.

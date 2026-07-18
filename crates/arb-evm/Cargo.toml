@@ -15,6 +15,7 @@ arb-stylus = { workspace = true }
 arb-alloy-consensus = { workspace = true }
 arbos = { workspace = true }
 alloy-rlp = { workspace = true }
+serde_json = { workspace = true }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true }
