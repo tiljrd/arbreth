@@ -338,8 +338,16 @@ impl<D: Database> L2PricingState<'_, D> {
     pub fn get_multi_gas_base_fee_per_resource<B: SystemStateBackend>(
         &self,
         backend: &mut B,
+        block_base_fee: U256,
     ) -> Result<[U256; NUM_RESOURCE_KIND], L2PricingError> {
-        let base_fee = self.base_fee_wei(backend)?;
+        // From MultiGasRefundFix (v61) the single-dimensional and zero-fee
+        // resources are valued at the block's base fee; earlier versions read
+        // the stored base fee.
+        let base_fee = if self.arbos_version >= version::ARBOS_VERSION_MULTI_GAS_REFUND_FIX {
+            block_base_fee
+        } else {
+            self.base_fee_wei(backend)?
+        };
         let mgf = super::multi_gas_fees::open_multi_gas_fees(self.multi_gas_base_fees.clone());
         let mut fees = [U256::ZERO; NUM_RESOURCE_KIND];
         for kind in ResourceKind::ALL {
@@ -460,6 +468,24 @@ impl<D: Database> L2PricingState<'_, D> {
         Ok(())
     }
 
+    /// Whether the multi-dimensional gas refund applies for a tx at this version.
+    ///
+    /// Pre-`MultiGasRefundFix` (v61): applies for any chain at or above
+    /// `MultiGasConstraints` (v60). From v61 the refund only applies when the
+    /// active gas model is `MultiGasConstraints`; single-gas chains skip it.
+    pub fn multi_gas_refund_applies<B: SystemStateBackend>(
+        &self,
+        backend: &mut B,
+    ) -> Result<bool, L2PricingError> {
+        if self.arbos_version < version::ARBOS_VERSION_MULTI_GAS_CONSTRAINTS {
+            return Ok(false);
+        }
+        if self.arbos_version >= version::ARBOS_VERSION_MULTI_GAS_REFUND_FIX {
+            return Ok(self.gas_model_to_use(backend)? == GasModel::MultiGasConstraints);
+        }
+        Ok(true)
+    }
+
     /// Compute total cost for a multi-gas usage, for refund calculations.
     ///
     /// Returns `sum(gas_used[kind] * base_fee[kind])` across all resource kinds.
@@ -467,8 +493,9 @@ impl<D: Database> L2PricingState<'_, D> {
         &self,
         backend: &mut B,
         gas_used: MultiGas,
+        block_base_fee: U256,
     ) -> Result<U256, L2PricingError> {
-        let fees = self.get_multi_gas_base_fee_per_resource(backend)?;
+        let fees = self.get_multi_gas_base_fee_per_resource(backend, block_base_fee)?;
         let mut total = U256::ZERO;
         for kind in ResourceKind::ALL {
             let amount = gas_used.get(kind);
@@ -484,17 +511,23 @@ impl<D: Database> L2PricingState<'_, D> {
     /// current-block multi-gas fees (as returned by `get_current_multi_gas_fees`).
     ///
     /// Single-dimensional gas and any resource whose current-block fee is zero
-    /// are valued at the live `base_fee_wei` (the per-block floor), matching
-    /// `get_multi_gas_base_fee_per_resource`. The refund reconciles the
-    /// single-gas cost the sender paid (`base_fee × gasUsed`) against this
+    /// are valued at the per-block base fee floor, matching
+    /// `get_multi_gas_base_fee_per_resource`: the block base fee from
+    /// MultiGasRefundFix (v61), the stored base fee before. The refund reconciles
+    /// the single-gas cost the sender paid (`base_fee × gasUsed`) against this
     /// multi-dimensional cost over the raw, pre-refund resource usage.
     pub fn multi_dimensional_price_for_refund_with_fees<B: SystemStateBackend>(
         &self,
         backend: &mut B,
         gas_used: MultiGas,
         cached_fees: &[U256; NUM_RESOURCE_KIND],
+        block_base_fee: U256,
     ) -> Result<U256, L2PricingError> {
-        let base_fee = self.base_fee_wei(backend)?;
+        let base_fee = if self.arbos_version >= version::ARBOS_VERSION_MULTI_GAS_REFUND_FIX {
+            block_base_fee
+        } else {
+            self.base_fee_wei(backend)?
+        };
         let mut total = U256::ZERO;
         for kind in ResourceKind::ALL {
             let amount = gas_used.get(kind);

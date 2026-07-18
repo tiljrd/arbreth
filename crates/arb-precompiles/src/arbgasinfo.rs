@@ -947,6 +947,14 @@ fn handle_multi_gas_base_fee(
 ) -> crate::ArbPrecompileResult {
     use arb_primitives::multigas::{ResourceKind, NUM_RESOURCE_KIND};
     let gas_limit = input.gas;
+    // From MultiGasRefundFix (v61) the single-dimensional and zero-fee resources
+    // are valued at the block base fee instead of the stored base fee, saving one
+    // SLOAD. reth reports a zero block base fee for `eth_call`; fall back to the
+    // stored base fee there, off the consensus path.
+    let block_base_fee = U256::from(input.internals().block_env().basefee());
+    let use_block_base_fee = ctx.block.arbos_version
+        >= arb_chainspec::arbos_version::ARBOS_VERSION_MULTI_GAS_REFUND_FIX
+        && !block_base_fee.is_zero();
     load_arbos(input)?;
 
     let internals = input.internals_mut();
@@ -955,10 +963,14 @@ fn handle_multi_gas_base_fee(
         .arbos_state(internals)
         .map_err(ArbPrecompileError::fatal)?;
 
-    let base_fee_wei = arb_state
-        .l2_pricing_state
-        .base_fee_wei(internals)
-        .map_err(ArbPrecompileError::fatal)?;
+    let base_fee = if use_block_base_fee {
+        block_base_fee
+    } else {
+        arb_state
+            .l2_pricing_state
+            .base_fee_wei(internals)
+            .map_err(ArbPrecompileError::fatal)?
+    };
     let multi_gas_fees = arb_state.l2_pricing_state.multi_gas_fees();
 
     let mut out = Vec::with_capacity(64 + NUM_RESOURCE_KIND * 32);
@@ -970,7 +982,7 @@ fn handle_multi_gas_base_fee(
             .get_current_block_fee(internals, kind)
             .map_err(ArbPrecompileError::fatal)?;
         let fee = if kind as u64 == RESOURCE_KIND_SINGLE_DIM || raw == U256::ZERO {
-            base_fee_wei
+            base_fee
         } else {
             raw
         };
@@ -978,8 +990,10 @@ fn handle_multi_gas_base_fee(
     }
 
     let result_words = (out.len() as u64).div_ceil(32);
-    // body reads: 1 SLOAD for base_fee_wei + NUM_RESOURCE_KIND per-kind fee SLOADs.
-    let body_sloads = 1 + NUM_RESOURCE_KIND as u64;
+    // body reads: NUM_RESOURCE_KIND per-kind fee SLOADs, plus the stored base fee
+    // SLOAD before MultiGasRefundFix (v61).
+    let base_fee_sloads = if use_block_base_fee { 0 } else { 1 };
+    let body_sloads = base_fee_sloads + NUM_RESOURCE_KIND as u64;
     crate::charge_storage_read(gas_used, ctx, body_sloads * SLOAD_GAS);
     crate::charge_computation(gas_used, ctx, result_words * COPY_GAS);
     Ok(crate::output((*gas_used).min(gas_limit), out.into()))

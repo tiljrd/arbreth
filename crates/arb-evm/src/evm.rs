@@ -1401,10 +1401,19 @@ where
     let total_gas = inputs.gas_limit;
 
     if total_gas < upfront_cost {
-        // Only the outermost Stylus frame leaves its abort gas undimensioned; a
-        // Stylus ancestor folds a nested abort into its own computation.
+        // Only the outermost Stylus frame dimensions its abort gas here; a Stylus
+        // ancestor folds a nested abort into its own computation.
         if stylus_frame_depth == 1 {
-            ctx.add_stylus_upfront_oog_gas(total_gas);
+            if arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_MULTI_GAS_REFUND_FIX {
+                // From MultiGasRefundFix (v61) the aborted frame's gas is
+                // attributed to WasmComputation rather than left out of the
+                // multi-gas total.
+                ctx.add_stylus_multi_gas(arb_primitives::multigas::MultiGas::wasm_computation_gas(
+                    total_gas,
+                ));
+            } else {
+                ctx.add_stylus_upfront_oog_gas(total_gas);
+            }
         }
         return InterpreterResult::new(InstructionResult::OutOfGas, Bytes::new(), zero_gas());
     }

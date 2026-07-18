@@ -43,6 +43,7 @@ pub enum ArbOSVersion {
     V50 = 50,
     V51 = 51,
     V60 = 60,
+    V61 = 61,
 }
 
 impl ArbOSVersion {
@@ -64,6 +65,7 @@ impl ArbOSVersion {
             50 => Some(Self::V50),
             51 => Some(Self::V51),
             60 => Some(Self::V60),
+            61 => Some(Self::V61),
             _ => None,
         }
     }
